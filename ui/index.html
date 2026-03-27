@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Disasters Monitor</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <div id="panel" class="panel">
+        <header class="panel-header">
+            <div>
+                <p class="eyebrow">Live Intelligence</p>
+                <h1>Disaster Monitor</h1>
+                <p class="subtitle">Track every hazard and automation timer in real time.</p>
+            </div>
+            <button id="close-btn" class="ghost" aria-label="Close panel">×</button>
+        </header>
+        <section class="panel-meta">
+            <div class="meta-block">
+                <span class="meta-label">Active event</span>
+                <strong id="active-label">None</strong>
+                <span id="active-timer" class="meta-value">—</span>
+            </div>
+            <div class="meta-block">
+                <span class="meta-label">Next automation</span>
+                <strong id="next-event">—</strong>
+                <button id="refresh-btn" class="ghost small">Refresh</button>
+            </div>
+            <div class="meta-block control-block">
+                <span class="meta-label">Manual controls</span>
+                <button id="stop-btn" class="ghost small" disabled>Stop active event</button>
+            </div>
+        </section>
+        <section id="disaster-list" class="panel-list">
+            <p class="muted">Awaiting disaster data…</p>
+        </section>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
