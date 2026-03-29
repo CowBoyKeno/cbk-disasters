@@ -1,5 +1,0 @@
-Disasters = {}
-
-DisasterTimecycles = {
-    default = nil
-}
