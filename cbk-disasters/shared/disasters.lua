@@ -1,0 +1,5 @@
+Disasters = {}
+
+DisasterTimecycles = {
+    default = nil
+}
