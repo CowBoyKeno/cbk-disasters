@@ -1,4 +1,4 @@
-const RESOURCE_NAME = window.GetParentResourceName ? window.GetParentResourceName() : 'cbk-disasters';
+﻿const RESOURCE_NAME = window.GetParentResourceName ? window.GetParentResourceName() : 'cbk-disasters';
 const panel = document.getElementById('panel');
 const listContainer = document.getElementById('disaster-list');
 const activeLabel = document.getElementById('active-label');
@@ -7,6 +7,8 @@ const nextEvent = document.getElementById('next-event');
 const closeBtn = document.getElementById('close-btn');
 const refreshBtn = document.getElementById('refresh-btn');
 const stopBtn = document.getElementById('stop-btn');
+const systemStatus = document.getElementById('system-status');
+const toggleSystemBtn = document.getElementById('toggle-system-btn');
 
 let panelData = null;
 let visible = false;
@@ -235,9 +237,17 @@ const toNumber = (value, fallback = 0) => {
 const renderPanel = () => {
     if (!panelData) {
         activeLabel.textContent = 'None';
-        activeTimer.textContent = '—';
-        nextEvent.textContent = '—';
-        listContainer.innerHTML = '<p class="muted">Awaiting disaster data…</p>';
+        activeTimer.textContent = '-';
+        nextEvent.textContent = '-';
+        listContainer.innerHTML = '<p class="muted">Awaiting disaster data...</p>';
+        if (systemStatus) {
+            systemStatus.textContent = 'Unknown';
+            systemStatus.className = 'meta-value system-status unknown';
+        }
+        if (toggleSystemBtn) {
+            toggleSystemBtn.textContent = 'Enable system';
+            toggleSystemBtn.disabled = true;
+        }
         if (stopBtn) {
             stopBtn.disabled = true;
         }
@@ -245,21 +255,40 @@ const renderPanel = () => {
     }
 
     const elapsed = getElapsed();
+    const systemEnabled = panelData.systemEnabled !== false;
+    const automationEnabled = panelData.automationEnabled !== false;
+
     if (panelData.active) {
         activeLabel.textContent = panelData.active.label;
         const remaining = Math.max(0, (panelData.active.remainingSeconds || 0) - elapsed);
         activeTimer.textContent = formatSeconds(remaining);
     } else {
         activeLabel.textContent = 'None';
-        activeTimer.textContent = '—';
+        activeTimer.textContent = '-';
+    }
+
+    if (systemStatus) {
+        systemStatus.textContent = systemEnabled ? 'Enabled' : 'Disabled';
+        systemStatus.className = `meta-value system-status ${systemEnabled ? 'enabled' : 'disabled'}`;
+    }
+
+    if (toggleSystemBtn) {
+        toggleSystemBtn.textContent = systemEnabled ? 'Disable system' : 'Enable system';
+        toggleSystemBtn.disabled = false;
     }
 
     if (stopBtn) {
         stopBtn.disabled = !panelData.active;
     }
 
-    const nextSeconds = Math.max(0, (panelData.automationNextEventSeconds || 0) - elapsed);
-    nextEvent.textContent = nextSeconds > 0 ? formatSeconds(nextSeconds) : '—';
+    if (!systemEnabled) {
+        nextEvent.textContent = 'Disabled';
+    } else if (!automationEnabled) {
+        nextEvent.textContent = 'Off';
+    } else {
+        const nextSeconds = Math.max(0, (panelData.automationNextEventSeconds || 0) - elapsed);
+        nextEvent.textContent = nextSeconds > 0 ? formatSeconds(nextSeconds) : '-';
+    }
 
     if (!panelData.disasters || panelData.disasters.length === 0) {
         listContainer.innerHTML = '<p class="muted">No disasters configured.</p>';
@@ -277,7 +306,15 @@ const renderPanel = () => {
         title.textContent = entry.label;
         const status = document.createElement('span');
         status.className = `status ${entry.status || 'ready'}`;
-        status.textContent = entry.status === 'active' ? 'Active' : entry.status === 'cooldown' ? 'Cooldown' : 'Ready';
+        const statusLabels = {
+            active: 'Active',
+            blocked: 'Busy',
+            cooldown: 'Cooldown',
+            disabled: 'Disabled',
+            unavailable: 'Config issue',
+            ready: 'Ready'
+        };
+        status.textContent = statusLabels[entry.status] || 'Ready';
         header.appendChild(title);
         header.appendChild(status);
 
@@ -286,11 +323,17 @@ const renderPanel = () => {
         const duration = document.createElement('span');
         const durationMin = toNumber(entry.duration && entry.duration.min, 1);
         const durationMax = toNumber(entry.duration && entry.duration.max, durationMin);
-        duration.textContent = `Duration: ${durationMin}m – ${durationMax}m`;
+        duration.textContent = `Duration: ${durationMin}m - ${durationMax}m`;
         const detailTwo = document.createElement('span');
         if (entry.status === 'active') {
             const remaining = Math.max(0, (entry.remainingSeconds || 0) - elapsed);
             detailTwo.textContent = `Remaining: ${formatSeconds(remaining)}`;
+        } else if (entry.status === 'blocked') {
+            detailTwo.textContent = `Blocked by: ${entry.blockedByLabel || 'another active event'}`;
+        } else if (entry.status === 'disabled') {
+            detailTwo.textContent = 'Disabled in config';
+        } else if (entry.status === 'unavailable') {
+            detailTwo.textContent = 'Zones missing or invalid';
         } else {
             detailTwo.textContent = `Cooldown: ${formatSeconds(entry.cooldownRemaining || 0)}`;
         }
@@ -302,7 +345,7 @@ const renderPanel = () => {
         const startButton = document.createElement('button');
         startButton.className = 'ghost small';
         startButton.textContent = 'Start event';
-        startButton.disabled = entry.status !== 'ready';
+        startButton.disabled = !systemEnabled || entry.canStart !== true;
         startButton.addEventListener('click', () => {
             sendNative('startDisaster', { key: entry.key });
         });
@@ -353,7 +396,6 @@ const renderPanel = () => {
         listContainer.appendChild(card);
     });
 };
-
 window.addEventListener('message', (event) => {
     const data = event.data;
     if (!data) return;
@@ -377,6 +419,12 @@ window.addEventListener('message', (event) => {
 
 closeBtn.addEventListener('click', () => sendNative('closePanel'));
 refreshBtn.addEventListener('click', () => sendNative('requestPanelData'));
+if (toggleSystemBtn) {
+    toggleSystemBtn.addEventListener('click', () => {
+        const enabled = !(panelData && panelData.systemEnabled !== false);
+        sendNative('setSystemEnabled', { enabled });
+    });
+}
 if (stopBtn) {
     stopBtn.addEventListener('click', () => sendNative('stopDisaster'));
 }
@@ -386,3 +434,4 @@ setInterval(() => {
         renderPanel();
     }
 }, 1000);
+

@@ -5,19 +5,13 @@ lua54 'yes'
 author 'CowBoyKeno'
 name 'cbk-disasters'
 description 'Server-authoritative RP disaster system for public FiveM servers'
-version '1.0.0'
-
-shared_scripts {
-    'shared/config.lua',
-    'shared/disasters.lua'
-}
+version '2.0.0'
 
 client_scripts {
     'client/main.lua'
 }
 
 server_scripts {
-    'server/config.lua',
     'server/main.lua'
 }
 

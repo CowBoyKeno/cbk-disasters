@@ -105,6 +105,18 @@ body {
     color: rgba(255, 255, 255, 0.55);
 }
 
+.system-status.enabled {
+    color: #7bea7b;
+}
+
+.system-status.disabled {
+    color: #f3a056;
+}
+
+.system-status.unknown {
+    color: rgba(255, 255, 255, 0.55);
+}
+
 .ghost {
     border: 1px solid rgba(255, 255, 255, 0.35);
     background: transparent;
@@ -161,6 +173,18 @@ body {
 
 .disaster-card .status.cooldown {
     color: #f36e9c;
+}
+
+.disaster-card .status.blocked {
+    color: #ffd36a;
+}
+
+.disaster-card .status.disabled {
+    color: #b7bcc9;
+}
+
+.disaster-card .status.unavailable {
+    color: #ff9a7a;
 }
 
 .disaster-card .status.ready {

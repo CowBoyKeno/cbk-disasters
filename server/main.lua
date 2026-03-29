@@ -1,22 +1,659 @@
-local RESOURCE = GetCurrentResourceName()
+Config = {}
 
-local State = {
+Config.Debug = false
+
+Config.Locale = {
+    prefix = '^3[Disaster Alert]^7 ',
+    fallbackEventName = 'Unknown Event',
+    adminOnly = 'You do not have permission to use this command.',
+    invalidDisaster = 'Invalid disaster key.',
+    blizzardNightOnly = 'Blizzards can only auto-start at night unless you launch one from the panel.',
+    disasterAlreadyActive = 'A disaster is already active. Stop it before starting another one.',
+    disasterConfigDisabled = 'That disaster is disabled in config.',
+    disasterZoneUnavailable = 'That disaster cannot start because its configured zones are missing or invalid.',
+    configValidationFailed = 'Disaster configuration validation failed. Check the server console for details.',
+    invalidTiming = 'Invalid timing values.',
+    timingUpdated = 'Timing values saved.',
+    timingSaveFailed = 'Timing values updated for this session, but saving to disk failed.',
+    systemEnabled = 'Disaster system enabled.',
+    systemDisabled = 'Disaster system disabled.',
+    systemUnavailable = 'The disaster system is currently disabled.',
+    automationDisabled = 'Automatic disasters are disabled.',
+    disasterStarted = 'Disaster started:',
+    disasterStopped = 'Active disaster stopped.',
+    noActiveDisaster = 'There is no active disaster.',
+    nextDisaster = 'Next automatic disaster in approximately',
+    minutes = 'minutes'
+}
+
+Config.Announcements = {
+    enabled = true,
+    useChat = true,
+    useFeedSound = true,
+    repeatReminderMinutes = 5
+}
+-- Server-only admin settings live in `server/config.lua` so identifiers are not sent to clients.
+
+Config.System = {
+    enabled = false -- Startup state for the whole disaster system. The admin panel can still toggle this live.
+}
+
+Config.Automation = {
+    enabled = true,
+    minMinutesBetweenEvents = 35,
+    maxMinutesBetweenEvents = 90,
+    randomizeDuration = true,
+    blizzardNightOnly = true,
+    blizzardNightStartHour = 20,
+    blizzardNightEndHour = 6,
+    blizzardNightUseUtc = false -- false = server local time, true = UTC
+}
+
+Config.Sync = {
+    weatherApplyIntervalMs = 2000,
+    stateBagName = 'cbk_disasters:state',
+    stateRequestCooldownMs = 1500
+}
+
+Config.Intensity = {
+    zoneMinimum = 0.12,
+    curveExponent = 0.80
+}
+
+Config.Transitions = {
+    inMinutes = 3,
+    outMinutes = 3,
+    curveExponent = 1.0
+}
+
+-- Shared/global buckets. Disaster-specific settings are defined in `shared/config/*.lua`.
+Config.Hazards = {
+    tickMs = 2500
+}
+
+Config.Zones = {}
+
+Config.ClientFx = {
+    drawZoneMarkersWhenDebug = false,
+    statusReminderSeconds = 90,
+    debugZoneMarkerAlpha = 60,
+    alertSound = {
+        enabled = true,
+        useNuiSiren = true,
+        sirenDurationMs = 6200,
+        sirenVolume = 0.30,
+        mode = 'bulletin',
+        bulletinLowHz = 853,
+        bulletinHighHz = 960,
+        bulletinOnMs = 950,
+        bulletinOffMs = 260,
+        bulletinCycles = 4,
+        bulletinStaticMs = 120,
+        useFrontendFallback = false,
+        name = '5_SEC_WARNING',
+        set = 'DLC_HEISTS_GENERAL_FRONTEND_SOUNDS',
+        pulses = 2,
+        intervalMs = 220,
+        finalName = 'Event_Start_Text',
+        finalSet = 'GTAO_FM_Events_Soundset'
+    },
+    zoneBlip = {
+        enabled = true,
+        radiusColor = 1,
+        radiusAlpha = 128,
+        radiusMultiplier = 1.35,
+        centerSprite = 161,
+        centerColor = 1,
+        centerScale = 1.15,
+        shortRange = false,
+        flashes = true,
+        flashTimerMs = 15000,
+        showWorldPulse = false,
+        worldPulseMinScale = 1.05,
+        worldPulseMaxScale = 1.45,
+        worldPulseMinAlpha = 85,
+        worldPulseMaxAlpha = 180,
+        worldPulseHeight = 18.0,
+        worldPulseSpeed = 0.004
+    }
+}
+
+
+Disasters = {}
+
+DisasterTimecycles = {
+    default = nil
+}
+
+
+Config.Hazards = Config.Hazards or {}
+Disasters = Disasters or {}
+DisasterTimecycles = DisasterTimecycles or { default = nil }
+
+Config.Hazards.heatwave = {
+    enabled = true,
+    pedestrianDamage = 2,
+    vehicleProtection = true,
+    sprintStaminaDrain = true
+}
+
+Disasters.heatwave = {
+    key = 'heatwave',
+    label = 'Extreme Heat Wave',
+    announcement = 'A dangerous heat wave is now impacting the state. Hydrate, reduce exertion, and avoid long exposure outdoors.',
+    weather = 'EXTRASUNNY',
+    rainLevel = 0.0,
+    windSpeed = 0.0,
+    timecycle = 'heatwave',
+    duration = { min = 18, max = 35 },
+    cooldownMinutes = 45,
+    weight = 12,
+    hazard = 'heatwave',
+    transition = {
+        inMinutes = 4,
+        outMinutes = 4
+    }
+}
+
+DisasterTimecycles.heatwave = 'REDMIST_blend'
+
+
+Config.Hazards = Config.Hazards or {}
+Disasters = Disasters or {}
+DisasterTimecycles = DisasterTimecycles or { default = nil }
+
+Config.Hazards.thunderstorm = {
+    enabled = true,
+    lightningStrikeChance = 0.022, -- per eligible player per tick
+    strikeRadius = 6.0,
+    strikeDamage = 20
+}
+
+Disasters.thunderstorm = {
+    key = 'thunderstorm',
+    label = 'Severe Thunderstorm',
+    announcement = 'A severe thunderstorm has developed. Expect lightning, reduced visibility, and hazardous driving conditions.',
+    weather = 'THUNDER',
+    rainLevel = 0.85,
+    windSpeed = 0.75,
+    timecycle = 'storm',
+    duration = { min = 16, max = 28 },
+    cooldownMinutes = 35,
+    weight = 14,
+    hazard = 'thunderstorm',
+    transition = {
+        inMinutes = 3,
+        outMinutes = 3
+    }
+}
+
+DisasterTimecycles.storm = 'Rainy'
+DisasterTimecycles.storm_dark = 'BarryFadeOut'
+
+
+Config.Hazards = Config.Hazards or {}
+Config.Zones = Config.Zones or {}
+Config.ClientFx = Config.ClientFx or {}
+Disasters = Disasters or {}
+
+Config.Hazards.tornado = {
+    enabled = true,
+    pullRadius = 120.0,
+    lethalCoreRadius = 10.0,
+    maxForceDistance = 105.0,
+    vehicleEngineStallChance = 0.20,
+    debrisDamage = 4,
+    movement = {
+        enabled = true,
+        minSpeed = 1.0,
+        maxSpeed = 4.0,
+        turnIntervalMinMs = 3200,
+        turnIntervalMaxMs = 6400,
+        turnJitterDegrees = 24.0,
+        turnTowardCenterWeight = 0.14,
+        zoneRadiusRatio = 1.0,
+        maxTravelRadius = 2200.0,
+        updateIntervalMs = 100,
+        broadcastIntervalMs = 250,
+        broadcastUpdates = true
+    }
+}
+
+Config.Zones.tornado = {
+    { name = 'Grapeseed', coords = vec3(2468.5, 4781.9, 34.6), radius = 2100.0 },
+    { name = 'Sandy Shores', coords = vec3(1735.8, 3298.1, 41.1), radius = 2400.0 },
+    { name = 'Great Chaparral', coords = vec3(-104.3, 1920.6, 196.9), radius = 2200.0 },
+    { name = 'Paleto Bay', coords = vec3(-160.0, 6225.0, 30.0), radius = 2000.0 },
+    { name = 'Mount Chiliad', coords = vec3(450.0, 5560.0, 800.0), radius = 2400.0 },
+    { name = 'Raton Canyon', coords = vec3(-150.0, 4415.0, 100.0), radius = 2200.0 }
+}
+
+Config.ClientFx.tornadoParticle = {
+    enabled = true,
+    asset = 'scr_rcbarry2',
+    effect = 'scr_rcbarry2_trail',
+    scale = 3.4,
+    heightOffset = 2.5,
+    heightOffsets = { 2.5, 10.0, 18.0 },
+    scales = { 3.8, 2.7, 1.8 },
+    farClipDistance = 500.0,
+    debrisEffect = 'scr_fbi_falling_debris',
+    debrisBurstScale = 1.55,
+    debrisBurstRadius = 30.0,
+    debrisBurstIntervalMs = 1200
+}
+
+Config.ClientFx.tornadoFunnel = {
+    enabled = true,
+    asset = 'core',
+    effect = 'ent_amb_smoke_foundry',
+    effects = {
+        'ent_amb_smoke_foundry'
+    },
+    layers = 120,
+    baseRadius = 1.0,
+    topRadius = 4.5,
+    baseHeight = -1.2,
+    topHeight = 200.0,
+    baseScale = 2.6,
+    topScale = 8.0,
+    swirlDegreesPerLayer = 55.0,
+    rotationSpeed = 1.8,
+    refreshIntervalMs = 250,
+    farClipDistance = 500.0,
+    maxHandles = 40,
+    innerFillCount = 6,
+    topCloudEffect = 'ent_amb_smoke_foundry',
+    topCloudScale = 7.8,
+    topCloudHeight = 145.0,
+    drawSolidFunnel = false,
+    drawLayers = 120,
+    drawBaseRadius = 30.0,
+    drawTopRadius = 3.0,
+    drawBaseHeight = 2.0,
+    drawTopHeight = 222.0,
+    drawSwirlRadius = 4.8,
+    drawSwirlSpeed = 4.0,
+    drawAlphaBase = 240,
+    drawAlphaTop = 28,
+    drawColor = { r = 60, g = 60, b = 60 },
+    drawConeShell = false,
+    drawSegments = 30,
+    drawShellAlpha = 125,
+    drawShellColor = { r = 52, g = 52, b = 52 },
+    drawLineFunnel = false,
+    drawLineCount = 26,
+    drawLineAlpha = 140,
+    drawLineColor = { r = 95, g = 95, b = 95 },
+    drawCenterBeacon = false,
+    drawBeaconColor = { r = 220, g = 220, b = 220 },
+    drawBeaconAlpha = 80,
+    drawBeaconScale = 15.5,
+    drawVolumetricCloud = false,
+    volumetricBands = 6,
+    volumetricPuffsPerBand = 6,
+    volumetricAlphaBase = 60,
+    volumetricAlphaTop = 34,
+    volumetricColor = { r = 70, g = 70, b = 70 },
+    volumetricDrift = 0.55
+}
+
+Config.ClientFx.tornadoInteraction = {
+    enabled = true,
+    maxDistance = 260.0,
+    forceIntervalMs = 70,
+    closeRangeDistance = 30.0,
+    extremeCoreDistance = 10.0,
+    damageTickMs = 1600,
+    player = {
+        enabled = true,
+        maxDistance = 40.0,
+        maxPull = 6.25,
+        maxLift = 3.35,
+        maxSpin = 1.95,
+        pullVelocity = 8.5,
+        spinVelocity = 4.1,
+        liftVelocity = 7.8,
+        groundedLiftVelocity = 3.4,
+        minVerticalVelocity = 2.2,
+        maxVerticalVelocity = 14.0,
+        velocityPreserveFactor = 0.45,
+        ragdollThreshold = 0.10,
+        liftedRagdollThreshold = 0.06,
+        ragdollTimeMs = 2200,
+        maintainRagdollIntervalMs = 280,
+        releaseDistance = 18.0,
+        releaseRearmDistance = 62.0,
+        releaseForceScaleThreshold = 0.82,
+        releaseAfterMs = 1750,
+        releaseCooldownMs = 4200,
+        releaseOutVelocity = 42.0,
+        releaseUpVelocity = 11.5,
+        releaseSpinVelocity = 5.4,
+        releaseVelocityPreserveFactor = 0.10,
+        velocityClamp = 38.0
+    },
+    peds = {
+        enabled = true,
+        searchRadius = 40.0,
+        sweepIntervalMs = 350,
+        maxSweepCount = 10,
+        maxPull = 2.45,
+        maxLift = 0.86,
+        maxSpin = 0.90,
+        pullVelocity = 4.8,
+        spinVelocity = 2.0,
+        liftVelocity = 4.6,
+        groundedLiftVelocity = 1.8,
+        minVerticalVelocity = 1.2,
+        maxVerticalVelocity = 9.0,
+        velocityPreserveFactor = 0.52,
+        ragdollThreshold = 0.18,
+        ragdollTimeMs = 1800,
+        velocityClamp = 20.0
+    },
+    camera = {
+        enabled = true,
+        shakeName = 'SKY_DIVING_SHAKE',
+        baseAmplitude = 0.10,
+        maxAmplitude = 0.52,
+        updateIntervalMs = 120
+    },
+    sound = {
+        enabled = true,
+        maxDistance = 260.0,
+        baseVolume = 0.02,
+        maxVolume = 0.26,
+        lowpassHz = 420,
+        highpassHz = 36,
+        centerBoostDistance = 70.0
+    },
+    vehicle = {
+        enabled = true,
+        maxDistance = 30.0,
+        sweepRadius = 40.0,
+        sweepIntervalMs = 450,
+        maxSweepCount = 8,
+        maxLift = 6.00,
+        maxPull = 8.6,
+        maxSpin = 4.80,
+        pullVelocity = 10.4,
+        spinVelocity = 6.4,
+        liftVelocity = 7.4,
+        groundedLiftVelocity = 4.6,
+        minVerticalVelocity = 1.4,
+        maxVerticalVelocity = 15.5,
+        velocityPreserveFactor = 0.58,
+        releaseDistance = 18.0,
+        releaseRearmDistance = 40.0,
+        releaseForceScaleThreshold = 0.82,
+        releaseAfterMs = 3400,
+        releaseCooldownMs = 4200,
+        releaseOutVelocity = 42.0,
+        releaseUpVelocity = 15.0,
+        releaseSpinVelocity = 8.0,
+        releaseVelocityPreserveFactor = 0.08,
+        velocityClamp = 58.0
+    },
+    debrisPool = {
+        enabled = true,
+        maxDistance = 100.0,
+        poolSizeNear = 16,
+        poolSizeMid = 10,
+        poolSizeFar = 6,
+        updateIntervalMs = 250,
+        modelNames = {
+            'prop_rub_tyre_01',
+            'prop_trafficcone_01a',
+            'prop_boxpile_06b',
+            'prop_crate_11e',
+            'prop_cardbordbox_04a',
+            'prop_bin_08open',
+            'prop_bucket_02a',
+            { name = 'a_c_cow', entityType = 'ped' }
+        },
+        spawnRadius = 30.0,
+        minHeight = 2.0,
+        maxHeight = 28.0,
+        orbitSpeed = 1.4,
+        riseSpeed = 6.8,
+        despawnHeight = 32.0,
+        collision = false
+    }
+}
+
+Disasters.tornado = {
+    key = 'tornado',
+    label = 'Tornado Warning',
+    announcement = 'A tornado warning is in effect. Take cover immediately and avoid open roads near the impact corridor.',
+    weather = 'THUNDER',
+    rainLevel = 1.00,
+    windSpeed = 1.00,
+    duration = { min = 10, max = 18 },
+    cooldownMinutes = 80,
+    weight = 5,
+    hazard = 'tornado',
+    transition = {
+        inMinutes = 2,
+        outMinutes = 2
+    },
+    requiresZone = 'tornado'
+}
+
+
+Config.Hazards = Config.Hazards or {}
+Config.ClientFx = Config.ClientFx or {}
+Disasters = Disasters or {}
+
+Config.Hazards.blizzard = {
+    enabled = true,
+    pedestrianDamage = 1
+}
+
+Config.ClientFx.blizzard = {
+    earlyWeather = 'XMAS',
+    buildupWeather = 'XMAS',
+    snowCoverWeather = 'XMAS',
+    enableGlobalSnowCover = true,
+    trackThreshold = 0.0,
+    snowCoverThreshold = 0.0,
+    weatherTransitionSeconds = 1.5,
+    forceSnowPass = true,
+    snowLevelMin = 1.00,
+    snowLevelMax = 1.00,
+    weatherWindBase = 2.00,
+    weatherWindExtra = 1.50,
+    timecycleBoost = 0.80,
+    fogStrength = 1.00,
+    windBaseSpeed = 2.20,
+    windMaxSpeed = 3.60,
+    windBaseDirection = 235.0,
+    windSwingDegrees = 92.0,
+    windGustSpeed = 1.35,
+    windGustAmplitude = 0.70,
+    windMicroGustSpeed = 2.95,
+    windMicroGustAmplitude = 0.28,
+    particleCountMin = 800,
+    particleCountMax = 1000,
+    particleRadius = 30.0,
+    particleNearBias = 2.25,
+    particleHeightMin = 0.25,
+    particleHeightMax = 20.0,
+    particleFallSpeedMin = 6.0,
+    particleFallSpeedMax = 14.0,
+    particleWindDriftScale = 8.0,
+    particleTrailMin = 0.10,
+    particleTrailMax = 0.24,
+    particleAlpha = 1600,
+    particleMarkerFraction = 0.00,
+    particleMarkerMinScale = 0.050,
+    particleMarkerMaxScale = 0.100,
+    particleColor = { r = 240, g = 245, b = 255 },
+    hazeMinAlpha = 100,
+    hazeMaxAlpha = 180,
+    hazeAccentMaxAlpha = 150,
+    hazeColor = { r = 236, g = 242, b = 252 },
+    hazeAccentColor = { r = 214, g = 226, b = 242 }
+}
+
+Disasters.blizzard = {
+    key = 'blizzard',
+    label = 'Blizzard Conditions',
+    announcement = 'Whiteout blizzard conditions are impacting northern areas. Travel is strongly discouraged.',
+    weather = 'XMAS',
+    rainLevel = 0.0,
+    windSpeed = 1.00,
+    duration = { min = 18, max = 30 },
+    cooldownMinutes = 80,
+    weight = 6,
+    hazard = 'blizzard',
+    transition = {
+        inMinutes = 5,
+        outMinutes = 5
+    }
+}
+
+
+Config.Hazards = Config.Hazards or {}
+Config.Zones = Config.Zones or {}
+Disasters = Disasters or {}
+DisasterTimecycles = DisasterTimecycles or { default = nil }
+
+Config.Hazards.duststorm = {
+    enabled = true,
+    pedestrianDamage = 1
+}
+
+Config.Zones.duststorm = {
+    { name = 'Grand Senora Desert', coords = vec3(1880.0, 3560.0, 40.0), radius = 650.0 },
+    { name = 'Sandy Shores', coords = vec3(1735.8, 3298.1, 41.1), radius = 650.0 },
+    { name = 'Algonquin', coords = vec3(-300.0, 2000.0, 100.0), radius = 450.0 },
+    { name = 'Grapeseed', coords = vec3(2468.5, 4781.9, 34.6), radius = 650.0 }
+}
+
+Disasters.duststorm = {
+    key = 'duststorm',
+    label = 'Dust Storm Advisory',
+    announcement = 'A dense dust storm is reducing visibility across desert regions. Slow down and use caution.',
+    weather = 'SMOG',
+    rainLevel = 0.0,
+    windSpeed = 1.00,
+    timecycle = 'sandstorm',
+    duration = { min = 16, max = 26 },
+    cooldownMinutes = 50,
+    weight = 10,
+    hazard = 'duststorm',
+    transition = {
+        inMinutes = 3,
+        outMinutes = 3
+    },
+    requiresZone = 'duststorm'
+}
+
+DisasterTimecycles.sandstorm = 'underwater_deep'
+
+
+Config.Hazards = Config.Hazards or {}
+Config.Zones = Config.Zones or {}
+Config.ClientFx = Config.ClientFx or {}
+Disasters = Disasters or {}
+DisasterTimecycles = DisasterTimecycles or { default = nil }
+
+Config.Hazards.wildfire_smoke = {
+    enabled = true,
+    pedestrianDamage = 1
+}
+
+Config.Zones.wildfire_smoke = {
+    { name = 'Tongva Hills', coords = vec3(-1462.0, 1322.0, 145.0), radius = 600.0 },
+    { name = 'Raton Canyon', coords = vec3(-150.0, 4415.0, 100.0), radius = 700.0 },
+    { name = 'Mount Chiliad', coords = vec3(450.0, 5560.0, 800.0), radius = 900.0 },
+    { name = 'Great Chaparral', coords = vec3(-104.3, 1920.6, 196.9), radius = 700.0 }
+}
+
+Config.ClientFx.wildfireSmoke = {
+    asset = 'core',
+    effect = 'exp_grd_grenade_smoke',
+    effects = {
+        'ent_amb_smoke_foundry',
+        'exp_grd_grenade_smoke',
+        'exp_extinguisher'
+    },
+    smokeScale = 7.5,
+    smokeFarClipDistance = 900.0,
+    maxDistance = 800.0,
+    minPlumes = 5,
+    maxPlumes = 20,
+    plumeRadius = 56.0,
+    plumeHeightOffset = 0.2,
+    refreshDistance = 14.0,
+    enableFire = true,
+    minFires = 8,
+    maxFires = 16,
+    fireRadius = 24.0,
+    fireMaxChildren = 1,
+    overlayMinAlpha = 46,
+    overlayMaxAlpha = 210,
+    overlayColor = { r = 224, g = 96, b = 24 },
+    accentOverlayMaxAlpha = 95,
+    accentOverlayColor = { r = 142, g = 28, b = 12 }
+}
+
+Disasters.wildfire_smoke = {
+    key = 'wildfire_smoke',
+    label = 'Wildfire Smoke Event',
+    announcement = 'Heavy wildfire smoke is affecting air quality. Limit outdoor exposure and expect poor visibility in affected areas.',
+    weather = 'FOGGY',
+    rainLevel = 0.0,
+    windSpeed = 0.20,
+    timecycle = 'forestfire',
+    duration = { min = 18, max = 32 },
+    cooldownMinutes = 55,
+    weight = 9,
+    hazard = 'wildfire_smoke',
+    transition = {
+        inMinutes = 4,
+        outMinutes = 4
+    },
+    requiresZone = 'wildfire_smoke'
+}
+
+DisasterTimecycles.forestfire = 'REDMIST'
+
+
+Config = Config or {}
+
+Config.Admin = {
+    aceCommand = 'cbkdisasters.admin',     -- ACE permission used by in-resource commands.
+    allowAcePermissions = true,            -- Set to false to disable ACE lookups and rely solely on identifiers.
+    allowConsole = true,                   -- Allow the server console (source 0) to run admin commands.
+    identifiers = {
+        'fivem:18296635',                     -- Authorized identifier example.
+        'discord:1043241558503337994',        -- Authorized identifier example.
+    }
+}
+
+
+RESOURCE = GetCurrentResourceName()
+
+State = {
     active = nil,
     nextEventAt = 0,
     lastRun = {},
     reminderAt = 0,
-    seq = 0
+    seq = 0,
+    systemEnabled = ((Config.System or {}).enabled ~= false)
 }
-local tornadoMotion = nil
-local panelSubscribers = {}
-local stateRequestThrottle = {}
-local TIMING_OVERRIDES_FILE = 'timing_overrides.json'
+tornadoMotion = nil
+panelSubscribers = {}
+stateRequestThrottle = {}
+TIMING_OVERRIDES_FILE = 'timing_overrides.json'
 
-local function now()
+function now()
     return os.time()
 end
 
-local function canServeStateRequest(src)
+function canServeStateRequest(src)
     if type(src) ~= 'number' or src <= 0 then
         return true
     end
@@ -32,7 +669,7 @@ local function canServeStateRequest(src)
     return true
 end
 
-local function normalizeClockHour(hour)
+function normalizeClockHour(hour)
     local numeric = tonumber(hour)
     if not numeric then
         return nil
@@ -42,20 +679,20 @@ local function normalizeClockHour(hour)
     return ((numeric % 24) + 24) % 24
 end
 
-local function getServerClockHour()
+function getServerClockHour()
     local automation = Config.Automation or {}
     local timeTable = automation.blizzardNightUseUtc == true and os.date('!*t') or os.date('*t')
     return normalizeClockHour(timeTable and timeTable.hour)
 end
 
-local function getBlizzardNightWindow()
+function getBlizzardNightWindow()
     local automation = Config.Automation or {}
     local startHour = normalizeClockHour(automation.blizzardNightStartHour or 20) or 20
     local endHour = normalizeClockHour(automation.blizzardNightEndHour or 6) or 6
     return startHour, endHour
 end
 
-local function isHourInWindow(hour, startHour, endHour)
+function isHourInWindow(hour, startHour, endHour)
     local normalizedHour = normalizeClockHour(hour)
     if not normalizedHour then
         return false
@@ -72,11 +709,11 @@ local function isHourInWindow(hour, startHour, endHour)
     return normalizedHour >= startHour or normalizedHour < endHour
 end
 
-local function isPanelActor(actor)
+function isPanelActor(actor)
     return type(actor) == 'string' and actor:sub(1, 6) == 'panel:'
 end
 
-local function isBlizzardAutoWindowOpen()
+function isBlizzardAutoWindowOpen()
     local automation = Config.Automation or {}
     if automation.blizzardNightOnly == false then
         return true
@@ -91,7 +728,144 @@ local function isBlizzardAutoWindowOpen()
     return isHourInWindow(currentHour, startHour, endHour)
 end
 
-local function canStartDisaster(key, actor)
+function getHazardConfig(hazardOrDef)
+    local hazardKey = hazardOrDef
+    if type(hazardOrDef) == 'table' then
+        hazardKey = hazardOrDef.hazard
+    end
+
+    if type(hazardKey) ~= 'string' or hazardKey == '' then
+        return nil, nil
+    end
+
+    return (Config.Hazards or {})[hazardKey], hazardKey
+end
+
+function getValidZones(zoneKey)
+    local zones = (Config.Zones or {})[zoneKey]
+    local validZones = {}
+
+    if type(zones) ~= 'table' then
+        return validZones
+    end
+
+    for i = 1, #zones do
+        local zone = zones[i]
+        local radius = type(zone) == 'table' and tonumber(zone.radius) or nil
+        if type(zone) == 'table' and zone.coords and radius and radius > 0.0 then
+            validZones[#validZones + 1] = zone
+        end
+    end
+
+    return validZones
+end
+
+function hasValidZoneConfig(zoneKey)
+    return #getValidZones(zoneKey) > 0
+end
+
+function normalizeTransitionConfig(transition)
+    local defaults = Config.Transitions or {}
+    local source = type(transition) == 'table' and transition or {}
+
+    local inMinutes = tonumber(source.inMinutes)
+    if inMinutes == nil then
+        inMinutes = tonumber(defaults.inMinutes) or 3
+    end
+
+    local outMinutes = tonumber(source.outMinutes)
+    if outMinutes == nil then
+        outMinutes = tonumber(defaults.outMinutes) or inMinutes
+    end
+
+    local curveExponent = tonumber(source.curveExponent)
+    if curveExponent == nil then
+        curveExponent = tonumber(defaults.curveExponent) or 1.0
+    end
+
+    return {
+        inSeconds = math.max(0, math.floor(inMinutes * 60)),
+        outSeconds = math.max(0, math.floor(outMinutes * 60)),
+        curveExponent = math.max(0.1, curveExponent)
+    }
+end
+
+function getDisasterTransitionConfig(defOrState)
+    if type(defOrState) ~= 'table' then
+        return normalizeTransitionConfig(nil)
+    end
+
+    local transition = defOrState.transition
+    if type(transition) == 'table' and transition.inSeconds ~= nil and transition.outSeconds ~= nil then
+        return {
+            inSeconds = math.max(0, math.floor(tonumber(transition.inSeconds) or 0)),
+            outSeconds = math.max(0, math.floor(tonumber(transition.outSeconds) or 0)),
+            curveExponent = math.max(0.1, tonumber(transition.curveExponent) or 1.0)
+        }
+    end
+
+    return normalizeTransitionConfig(transition)
+end
+
+function shapeTransitionIntensity(ratio, exponent)
+    if ratio <= 0.0 then
+        return 0.0
+    end
+
+    if ratio >= 1.0 then
+        return 1.0
+    end
+
+    return ratio ^ (tonumber(exponent) or 1.0)
+end
+
+function getDisasterTransitionIntensity(state, timestamp)
+    if type(state) ~= 'table' then
+        return 0.0
+    end
+
+    local duration = math.max(0, math.floor(tonumber(state.durationSeconds) or 0))
+    if duration <= 0 then
+        return 1.0
+    end
+
+    local transition = getDisasterTransitionConfig(state)
+    local ts = math.floor(tonumber(timestamp) or now())
+    local startedAt = math.floor(tonumber(state.startedAt) or ts)
+    local endsAt = math.floor(tonumber(state.endsAt) or (startedAt + duration))
+    local elapsed = math.max(0, ts - startedAt)
+    local remaining = math.max(0, endsAt - ts)
+    local fadeIn = transition.inSeconds or 0
+    local fadeOut = transition.outSeconds or 0
+    local fadeInRatio = fadeIn > 0 and math.min(1.0, elapsed / fadeIn) or 1.0
+    local fadeOutRatio = fadeOut > 0 and math.min(1.0, remaining / fadeOut) or 1.0
+
+    return shapeTransitionIntensity(math.min(fadeInRatio, fadeOutRatio), transition.curveExponent)
+end
+
+function canStartDisaster(key, actor)
+    local def = Disasters[key]
+    if not def then
+        return false, 'invalid'
+    end
+
+    if State.active then
+        return false, 'active'
+    end
+
+    local hazardConfig = getHazardConfig(def)
+    if not hazardConfig then
+        return false, 'invalid_config'
+    end
+
+    if hazardConfig.enabled == false then
+        return false, 'event_disabled'
+    end
+
+    if def.requiresZone and not hasValidZoneConfig(def.requiresZone) then
+        return false, 'zone_unavailable'
+    end
+
     if key ~= 'blizzard' then
         return true
     end
@@ -108,17 +882,17 @@ local function canStartDisaster(key, actor)
     return true
 end
 
-local function log(...)
+function log(...)
     print(('[%s] %s'):format(RESOURCE, table.concat({ ... }, ' ')))
 end
 
-local function debugLog(...)
+function debugLog(...)
     if Config.Debug then
         log('[debug]', ...)
     end
 end
 
-local function normalizeIdentifier(identifier)
+function normalizeIdentifier(identifier)
     if type(identifier) ~= 'string' then
         return nil
     end
@@ -128,7 +902,7 @@ local function normalizeIdentifier(identifier)
     return normalized
 end
 
-local function isIdentifierAuthorized(source)
+function isIdentifierAuthorized(source)
     local adminConfig = Config.Admin or {}
     local identifiers = adminConfig.identifiers or {}
     if type(identifiers) ~= 'table' or #identifiers == 0 then
@@ -162,7 +936,7 @@ local function isIdentifierAuthorized(source)
     return false
 end
 
-local function hasAdminPermission(src)
+function hasAdminPermission(src)
     local adminConfig = Config.Admin or {}
     if src == 0 then
         return adminConfig.allowConsole ~= false
@@ -177,7 +951,16 @@ local function hasAdminPermission(src)
     return isIdentifierAuthorized(src)
 end
 
-local function notifyAll(message)
+function isSystemEnabled()
+    return State.systemEnabled ~= false
+end
+
+function isAutomationEnabled()
+    local automation = Config.Automation or {}
+    return isSystemEnabled() and automation.enabled ~= false
+end
+
+function notifyAll(message)
     if not Config.Announcements.enabled then return end
     if Config.Announcements.useChat then
         TriggerClientEvent('chat:addMessage', -1, {
@@ -190,31 +973,31 @@ local function notifyAll(message)
     TriggerClientEvent('cbk_disasters:client:notify', -1, message, Config.Announcements.useFeedSound)
 end
 
-local function notifyOne(target, message)
+function notifyOne(target, message)
     TriggerClientEvent('cbk_disasters:client:notify', target, message, Config.Announcements.useFeedSound)
 end
 
-local function removePanelSubscriber(src)
+function removePanelSubscriber(src)
     local target = tonumber(src)
     if target and target > 0 then
         panelSubscribers[target] = nil
     end
 end
 
-local function addPanelSubscriber(src)
+function addPanelSubscriber(src)
     local target = tonumber(src)
     if target and target > 0 then
         panelSubscribers[target] = true
     end
 end
 
-local function clamp(n, min, max)
+function clamp(n, min, max)
     if n < min then return min end
     if n > max then return max end
     return n
 end
 
-local function randomFloat(min, max)
+function randomFloat(min, max)
     if max <= min then
         return min
     end
@@ -222,7 +1005,7 @@ local function randomFloat(min, max)
     return min + ((math.random(0, 10000) / 10000.0) * (max - min))
 end
 
-local function normalize2D(x, y)
+function normalize2D(x, y)
     local length = math.sqrt((x * x) + (y * y))
     if length <= 0.0001 then
         return 0.0, 0.0, 0.0
@@ -231,14 +1014,14 @@ local function normalize2D(x, y)
     return x / length, y / length, length
 end
 
-local function vecDistance(a, b)
+function vecDistance(a, b)
     local dx = a.x - b.x
     local dy = a.y - b.y
     local dz = a.z - b.z
     return math.sqrt(dx * dx + dy * dy + dz * dz)
 end
 
-local function getZoneIntensity(coords, zone, radiusOverride)
+function getZoneIntensity(coords, zone, radiusOverride)
     if not coords or not zone or not zone.coords then
         return 0.0, 0.0
     end
@@ -261,27 +1044,37 @@ local function getZoneIntensity(coords, zone, radiusOverride)
     return clamp(math.max(minimum, shaped), minimum, 1.0), dist
 end
 
-local function getPlayers()
+function getPlayers()
     return GetPlayers()
 end
 
-local function randomDuration(def)
-    if not Config.Automation.randomizeDuration then
-        return def.duration.min * 60
+function randomDuration(def)
+    local duration = def and def.duration or {}
+    local minMinutes = tonumber(duration.min)
+    local maxMinutes = tonumber(duration.max)
+    if not minMinutes or not maxMinutes then
+        return 60
     end
 
-    local minSeconds = def.duration.min * 60
-    local maxSeconds = def.duration.max * 60
+    minMinutes = math.max(1, math.floor(minMinutes))
+    maxMinutes = math.max(minMinutes, math.floor(maxMinutes))
+
+    if not Config.Automation.randomizeDuration then
+        return minMinutes * 60
+    end
+
+    local minSeconds = minMinutes * 60
+    local maxSeconds = maxMinutes * 60
     return math.random(minSeconds, maxSeconds)
 end
 
-local function chooseZone(zoneKey)
-    local zones = Config.Zones[zoneKey]
-    if not zones or #zones == 0 then return nil end
+function chooseZone(zoneKey)
+    local zones = getValidZones(zoneKey)
+    if #zones == 0 then return nil end
     return zones[math.random(1, #zones)]
 end
 
-local function serializeZone(zone)
+function serializeZone(zone)
     if not zone or not zone.coords then
         return nil
     end
@@ -297,7 +1090,7 @@ local function serializeZone(zone)
     }
 end
 
-local function normalizeTimingValues(durationMin, durationMax, cooldownMinutes)
+function normalizeTimingValues(durationMin, durationMax, cooldownMinutes)
     local minValue = tonumber(durationMin)
     local maxValue = tonumber(durationMax)
     local cooldownValue = tonumber(cooldownMinutes)
@@ -317,14 +1110,105 @@ local function normalizeTimingValues(durationMin, durationMax, cooldownMinutes)
     return minValue, maxValue, cooldownValue
 end
 
-local function applyTimingValues(def, durationMin, durationMax, cooldownMinutes)
+function validateDisasterDefinition(key, def)
+    local issues = {}
+
+    if type(def) ~= 'table' then
+        issues[#issues + 1] = ('%s: definition must be a table.'):format(tostring(key))
+        return issues
+    end
+
+    if def.key ~= key then
+        issues[#issues + 1] = ('%s: def.key must match the disaster key.'):format(tostring(key))
+    end
+
+    if type(def.label) ~= 'string' or def.label == '' then
+        issues[#issues + 1] = ('%s: label must be a non-empty string.'):format(tostring(key))
+    end
+
+    if type(def.announcement) ~= 'string' or def.announcement == '' then
+        issues[#issues + 1] = ('%s: announcement must be a non-empty string.'):format(tostring(key))
+    end
+
+    if type(def.weather) ~= 'string' or def.weather == '' then
+        issues[#issues + 1] = ('%s: weather must be a non-empty string.'):format(tostring(key))
+    end
+
+    local hazardConfig, hazardKey = getHazardConfig(def)
+    if not hazardKey then
+        issues[#issues + 1] = ('%s: hazard must be a non-empty string.'):format(tostring(key))
+    elseif not hazardConfig then
+        issues[#issues + 1] = ('%s: missing Config.Hazards.%s definition.'):format(tostring(key), hazardKey)
+    end
+
+    local weight = tonumber(def.weight or 1)
+    if not weight or weight <= 0 then
+        issues[#issues + 1] = ('%s: weight must be a positive number.'):format(tostring(key))
+    end
+
+    local duration = def.duration or {}
+    local minValue, maxValue, cooldownValue = normalizeTimingValues(duration.min, duration.max, def.cooldownMinutes)
+    if not minValue then
+        issues[#issues + 1] = ('%s: duration.min, duration.max, and cooldownMinutes must be valid integers.'):format(tostring(key))
+    elseif maxValue < minValue or cooldownValue < 0 then
+        issues[#issues + 1] = ('%s: duration/cooldown values are out of range.'):format(tostring(key))
+    end
+
+    if def.requiresZone then
+        if type(def.requiresZone) ~= 'string' or def.requiresZone == '' then
+            issues[#issues + 1] = ('%s: requiresZone must be a non-empty string when set.'):format(tostring(key))
+        elseif not hasValidZoneConfig(def.requiresZone) then
+            issues[#issues + 1] = ('%s: requires at least one valid zone in Config.Zones.%s.'):format(tostring(key), def.requiresZone)
+        end
+    end
+
+    if def.transition ~= nil then
+        if type(def.transition) ~= 'table' then
+            issues[#issues + 1] = ('%s: transition must be a table when set.'):format(tostring(key))
+        else
+            local inMinutes = def.transition.inMinutes
+            local outMinutes = def.transition.outMinutes
+            local curveExponent = def.transition.curveExponent
+
+            if inMinutes ~= nil and (not tonumber(inMinutes) or tonumber(inMinutes) < 0) then
+                issues[#issues + 1] = ('%s: transition.inMinutes must be a number greater than or equal to 0.'):format(tostring(key))
+            end
+
+            if outMinutes ~= nil and (not tonumber(outMinutes) or tonumber(outMinutes) < 0) then
+                issues[#issues + 1] = ('%s: transition.outMinutes must be a number greater than or equal to 0.'):format(tostring(key))
+            end
+
+            if curveExponent ~= nil and (not tonumber(curveExponent) or tonumber(curveExponent) <= 0) then
+                issues[#issues + 1] = ('%s: transition.curveExponent must be a number greater than 0.'):format(tostring(key))
+            end
+        end
+    end
+
+    return issues
+end
+
+function validateDisasterConfiguration()
+    local issues = {}
+
+    for key, def in pairs(Disasters) do
+        local definitionIssues = validateDisasterDefinition(key, def)
+        for i = 1, #definitionIssues do
+            issues[#issues + 1] = definitionIssues[i]
+        end
+    end
+
+    table.sort(issues)
+    return #issues == 0, issues
+end
+
+function applyTimingValues(def, durationMin, durationMax, cooldownMinutes)
     def.duration = def.duration or {}
     def.duration.min = durationMin
     def.duration.max = durationMax
     def.cooldownMinutes = cooldownMinutes
 end
 
-local function buildTimingOverrideSnapshot()
+function buildTimingOverrideSnapshot()
     local snapshot = {}
 
     for key, def in pairs(Disasters) do
@@ -340,7 +1224,7 @@ local function buildTimingOverrideSnapshot()
     return snapshot
 end
 
-local function saveTimingOverrides()
+function saveTimingOverrides()
     if not json or type(json.encode) ~= 'function' then
         log('Unable to save timing overrides: json.encode is unavailable.')
         return false
@@ -362,7 +1246,7 @@ local function saveTimingOverrides()
     return true
 end
 
-local function loadTimingOverrides()
+function loadTimingOverrides()
     if not json or type(json.decode) ~= 'function' then
         log('Unable to load timing overrides: json.decode is unavailable.')
         return
@@ -393,7 +1277,7 @@ local function loadTimingOverrides()
     end
 end
 
-local function resolveStateHazard(state)
+function resolveStateHazard(state)
     if not state then
         return nil
     end
@@ -413,7 +1297,7 @@ local function resolveStateHazard(state)
     return nil
 end
 
-local function hydrateStateHazard(state)
+function hydrateStateHazard(state)
     local hazard = resolveStateHazard(state)
     if not state or not hazard then
         return hazard
@@ -425,7 +1309,7 @@ local function hydrateStateHazard(state)
     return hazard
 end
 
-local function getTornadoVisualZone()
+function getTornadoVisualZone()
     if not State.active or hydrateStateHazard(State.active) ~= 'tornado' then
         return nil
     end
@@ -434,11 +1318,11 @@ local function getTornadoVisualZone()
     return serializeZone(zone)
 end
 
-local function clearTornadoMotion()
+function clearTornadoMotion()
     tornadoMotion = nil
 end
 
-local function initializeTornadoMotion(active)
+function initializeTornadoMotion(active)
     clearTornadoMotion()
 
     if not active or resolveStateHazard(active) ~= 'tornado' then
@@ -488,7 +1372,7 @@ local function initializeTornadoMotion(active)
     }
 end
 
-local function updateTornadoMovement()
+function updateTornadoMovement()
     local active = State.active
     if not active or resolveStateHazard(active) ~= 'tornado' then
         clearTornadoMotion()
@@ -578,38 +1462,59 @@ local function updateTornadoMovement()
     end
 end
 
-local function buildContext(def)
+function buildContext(def)
     local context = {
         hazard = def.hazard
     }
 
     if def.requiresZone then
-        context.zone = serializeZone(chooseZone(def.requiresZone))
+        local zone = chooseZone(def.requiresZone)
+        context.zone = serializeZone(zone)
+        if not context.zone then
+            return nil, 'zone_unavailable'
+        end
     end
 
     return context
 end
 
-local function buildPanelData()
+stopDisaster = nil
+
+
+
+function buildPanelData()
     local ts = now()
     local disasters = {}
     local panelActive = nil
 
     for _, def in pairs(Disasters) do
+        local hazardConfig = getHazardConfig(def)
+        local configEnabled = hazardConfig and hazardConfig.enabled ~= false
+        local zoneReady = not def.requiresZone or hasValidZoneConfig(def.requiresZone)
         local entry = {
             key = def.key,
             label = def.label,
             hazard = def.hazard,
             announcement = def.announcement,
             duration = def.duration,
-        cooldownSeconds = (def.cooldownMinutes or 0) * 60,
-        cooldownMinutes = def.cooldownMinutes or 0
+            cooldownSeconds = (def.cooldownMinutes or 0) * 60,
+            cooldownMinutes = def.cooldownMinutes or 0,
+            enabled = configEnabled,
+            zoneReady = zoneReady
         }
 
         local status = 'ready'
         if State.active and State.active.key == def.key then
             status = 'active'
             entry.remainingSeconds = math.max(0, (State.active.endsAt or 0) - ts)
+        elseif not configEnabled then
+            status = 'disabled'
+        elseif not zoneReady then
+            status = 'unavailable'
+        elseif State.active then
+            status = 'blocked'
+            entry.blockedBy = State.active.key
+            entry.blockedByLabel = State.active.label
         else
             local lastRun = State.lastRun[def.key] or 0
             local elapsed = ts - lastRun
@@ -630,6 +1535,7 @@ local function buildPanelData()
         end
 
         entry.status = status
+        entry.canStart = isSystemEnabled() and status == 'ready'
         disasters[#disasters + 1] = entry
     end
 
@@ -640,12 +1546,14 @@ local function buildPanelData()
     return {
         disasters = disasters,
         active = panelActive,
-        automationNextEventSeconds = math.max(0, State.nextEventAt - ts),
+        systemEnabled = isSystemEnabled(),
+        automationEnabled = isAutomationEnabled(),
+        automationNextEventSeconds = isAutomationEnabled() and math.max(0, State.nextEventAt - ts) or 0,
         timestamp = ts
     }
 end
 
-local function broadcastPanelData()
+function broadcastPanelData()
     local panelData = buildPanelData()
 
     for src in pairs(panelSubscribers) do
@@ -657,14 +1565,14 @@ local function broadcastPanelData()
     end
 end
 
-local function sendPanelData(target)
+function sendPanelData(target)
     local src = tonumber(target)
     if src and src > 0 and hasAdminPermission(src) then
         TriggerClientEvent('cbk_disasters:client:updatePanel', src, buildPanelData())
     end
 end
 
-local function openPanelFor(target)
+function openPanelFor(target)
     local src = tonumber(target)
     if not src or src <= 0 or not hasAdminPermission(src) then
         return false
@@ -675,7 +1583,9 @@ local function openPanelFor(target)
     return true
 end
 
-local function setGlobalState()
+
+
+function setGlobalState()
     hydrateStateHazard(State.active)
     GlobalState[Config.Sync.stateBagName] = State.active
     TriggerClientEvent('cbk_disasters:client:setState', -1, State.active)
@@ -683,7 +1593,14 @@ local function setGlobalState()
     broadcastPanelData()
 end
 
-local function scheduleNextRandom()
+function scheduleNextRandom()
+    if not isAutomationEnabled() then
+        State.nextEventAt = 0
+        debugLog('Automatic scheduling is disabled.')
+        broadcastPanelData()
+        return
+    end
+
     local minSecs = Config.Automation.minMinutesBetweenEvents * 60
     local maxSecs = Config.Automation.maxMinutesBetweenEvents * 60
     State.nextEventAt = now() + math.random(minSecs, maxSecs)
@@ -691,7 +1608,38 @@ local function scheduleNextRandom()
     broadcastPanelData()
 end
 
-local function stopDisaster(reason)
+function setSystemEnabled(enabled, actor)
+    local normalized = enabled ~= false
+    if State.systemEnabled == normalized then
+        return false
+    end
+
+    State.systemEnabled = normalized
+    State.reminderAt = 0
+
+    if normalized then
+        if not State.active then
+            scheduleNextRandom()
+        else
+            broadcastPanelData()
+        end
+        log(('Disaster system enabled by %s.'):format(tostring(actor or 'unknown')))
+        return true
+    end
+
+    if State.active then
+        stopDisaster('silent')
+    else
+        State.nextEventAt = 0
+        clearTornadoMotion()
+        setGlobalState()
+    end
+
+    log(('Disaster system disabled by %s.'):format(tostring(actor or 'unknown')))
+    return true
+end
+
+stopDisaster = function(reason)
     if not State.active then return false end
 
     local activeLabel = State.active.label
@@ -710,10 +1658,14 @@ local function stopDisaster(reason)
     return true
 end
 
-local function startDisaster(key, actor)
+function startDisaster(key, actor)
     local def = Disasters[key]
     if not def then
         return false, 'invalid'
+    end
+
+    if not isSystemEnabled() then
+        return false, 'disabled'
     end
 
     local allowed, reason = canStartDisaster(key, actor)
@@ -721,12 +1673,11 @@ local function startDisaster(key, actor)
         return false, reason
     end
 
-    if State.active then
-        stopDisaster('replace')
-    end
-
     local duration = randomDuration(def)
-    local context = buildContext(def)
+    local context, contextReason = buildContext(def)
+    if not context then
+        return false, contextReason or 'invalid_config'
+    end
     State.seq = State.seq + 1
 
     State.active = {
@@ -741,6 +1692,7 @@ local function startDisaster(key, actor)
         startedAt = now(),
         endsAt = now() + duration,
         durationSeconds = duration,
+        transition = getDisasterTransitionConfig(def),
         context = context,
         seq = State.seq,
         startedBy = actor or 'automation'
@@ -756,13 +1708,13 @@ local function startDisaster(key, actor)
     return true
 end
 
-local function chooseRandomDisaster()
+function chooseRandomDisaster()
     local pool = {}
     local ts = now()
-    local allowBlizzard = isBlizzardAutoWindowOpen()
 
     for key, def in pairs(Disasters) do
-        if key ~= 'blizzard' or allowBlizzard then
+        local allowed, reason = canStartDisaster(key, 'automation')
+        if allowed then
             local cooldown = def.cooldownMinutes * 60
             local lastRun = State.lastRun[key] or 0
             if ts - lastRun >= cooldown then
@@ -770,6 +1722,8 @@ local function chooseRandomDisaster()
                     pool[#pool + 1] = key
                 end
             end
+        elseif reason == 'zone_unavailable' or reason == 'invalid_config' then
+            debugLog(('Skipping disaster %s for automation: %s'):format(key, reason))
         end
     end
 
@@ -780,7 +1734,7 @@ local function chooseRandomDisaster()
     return pool[math.random(1, #pool)]
 end
 
-local function applyServerDamage(src, _, amount, hazard)
+function applyServerDamage(src, _, amount, hazard)
     local damage = math.max(0, math.floor(tonumber(amount) or 0))
     if damage <= 0 then return end
     local target = tonumber(src)
@@ -793,25 +1747,36 @@ local function applyServerDamage(src, _, amount, hazard)
     end
 end
 
-local function playerInVehicle(ped)
+function playerInVehicle(ped)
     return GetVehiclePedIsIn(ped, false) ~= 0
 end
 
-local function processHeatwave(src, ped, coords)
+function processHeatwave(src, ped, coords, active)
     local hz = Config.Hazards.heatwave
     if not hz.enabled then return end
     if hz.vehicleProtection and playerInVehicle(ped) then return end
-    applyServerDamage(src, ped, hz.pedestrianDamage, 'heatwave')
+    local intensity = getDisasterTransitionIntensity(active)
+    if intensity <= 0.0 then return end
+    if math.random() > intensity then return end
+
+    local damageScale = 0.25 + (intensity * 0.75)
+    local damage = math.max(1, math.floor((hz.pedestrianDamage * damageScale) + 0.5))
+    applyServerDamage(src, ped, damage, 'heatwave')
     TriggerClientEvent('cbk_disasters:client:hazard', src, {
         kind = 'heatwave',
+        intensity = intensity,
         staminaDrain = hz.sprintStaminaDrain
     })
 end
 
-local function processLightning(src, ped, coords, key)
+function processLightning(src, ped, coords, key, active)
     local hz = Config.Hazards[key]
     if not hz.enabled then return end
-    if math.random() > hz.lightningStrikeChance then return end
+    local transitionIntensity = getDisasterTransitionIntensity(active)
+    if transitionIntensity <= 0.0 then return end
+
+    local strikeChance = hz.lightningStrikeChance * transitionIntensity
+    if math.random() > strikeChance then return end
 
     local strike = {
         x = coords.x + math.random(-hz.strikeRadius * 10, hz.strikeRadius * 10) / 10.0,
@@ -819,22 +1784,27 @@ local function processLightning(src, ped, coords, key)
         z = coords.z
     }
 
-    applyServerDamage(src, ped, hz.strikeDamage, key)
+    local damage = math.max(1, math.floor((hz.strikeDamage * (0.25 + (transitionIntensity * 0.75))) + 0.5))
+    applyServerDamage(src, ped, damage, key)
     TriggerClientEvent('cbk_disasters:client:hazard', -1, {
         kind = 'lightning',
         coords = strike,
+        intensity = transitionIntensity,
         target = tonumber(src)
     })
 end
 
-local function processTornado(src, ped, coords, active)
+function processTornado(src, ped, coords, active)
     local hz = Config.Hazards.tornado
     if not hz.enabled then return end
+    local transitionIntensity = getDisasterTransitionIntensity(active)
+    if transitionIntensity <= 0.0 then return end
     local zone = active.context and active.context.zone
     if not zone then return end
 
     local effectiveRadius = math.min(zone.radius or hz.pullRadius, hz.pullRadius)
-    local intensity, dist = getZoneIntensity(coords, zone, effectiveRadius)
+    local zoneIntensity, dist = getZoneIntensity(coords, zone, effectiveRadius)
+    local intensity = zoneIntensity * transitionIntensity
     if intensity <= 0.0 then return end
 
     local lethal = dist <= hz.lethalCoreRadius
@@ -859,16 +1829,30 @@ local function processTornado(src, ped, coords, active)
     })
 end
 
-local function processRegionalDamage(src, ped, coords, active)
+function processRegionalDamage(src, ped, coords, active)
     local hazard = hydrateStateHazard(active)
     local hz = Config.Hazards[hazard]
     if not hz then return end
     if not hz.enabled then return end
+    local transitionIntensity = getDisasterTransitionIntensity(active)
+    if transitionIntensity <= 0.0 then return end
+    local def = active and active.key and Disasters[active.key] or nil
     local zone = active.context and active.context.zone
-    local intensity, dist = 1.0, 0.0
-    if zone then
-        intensity, dist = getZoneIntensity(coords, zone)
+    local intensity, dist = transitionIntensity, 0.0
+    if def and def.requiresZone then
+        if not zone or not zone.coords then
+            debugLog(('Skipping %s damage tick because the active zone context is missing.'):format(hazard))
+            return
+        end
+
+        local zoneIntensity
+        zoneIntensity, dist = getZoneIntensity(coords, zone)
+        intensity = zoneIntensity * transitionIntensity
         if intensity <= 0.0 then return end
+    end
+
+    if math.random() > intensity then
+        return
     end
 
     local pedestrianDamage = math.max(1, math.ceil(hz.pedestrianDamage * (0.35 + intensity)))
@@ -881,7 +1865,7 @@ local function processRegionalDamage(src, ped, coords, active)
     })
 end
 
-local function processHazards()
+function processHazards()
     local active = State.active
     if not active then return end
     local hazard = hydrateStateHazard(active)
@@ -892,9 +1876,9 @@ local function processHazards()
         if ped and ped ~= 0 and DoesEntityExist(ped) then
             local coords = GetEntityCoords(ped)
             if hazard == 'heatwave' then
-                processHeatwave(src, ped, coords)
+                processHeatwave(src, ped, coords, active)
             elseif hazard == 'thunderstorm' then
-                processLightning(src, ped, coords, 'thunderstorm')
+                processLightning(src, ped, coords, 'thunderstorm', active)
             elseif hazard == 'tornado' then
                 processTornado(src, ped, coords, active)
             elseif hazard == 'blizzard' or hazard == 'duststorm' or hazard == 'wildfire_smoke' then
@@ -903,6 +1887,8 @@ local function processHazards()
         end
     end
 end
+
+
 
 RegisterNetEvent('cbk_disasters:server:requestState', function()
     local src = source
@@ -947,6 +1933,51 @@ RegisterNetEvent('cbk_disasters:server:toggleTornadoDebug', function(action)
     TriggerClientEvent('cbk_disasters:client:setTornadoDebug', src, tostring(action or 'toggle'))
 end)
 
+local function resolveStartFailureMessage(reason)
+    if reason == 'invalid' then
+        return Config.Locale.invalidDisaster
+    end
+
+    if reason == 'disabled' then
+        return Config.Locale.systemUnavailable
+    end
+
+    if reason == 'night_only' then
+        return Config.Locale.blizzardNightOnly
+    end
+
+    if reason == 'active' then
+        return Config.Locale.disasterAlreadyActive
+    end
+
+    if reason == 'event_disabled' then
+        return Config.Locale.disasterConfigDisabled
+    end
+
+    if reason == 'zone_unavailable' then
+        return Config.Locale.disasterZoneUnavailable
+    end
+
+    if reason == 'invalid_config' then
+        return Config.Locale.configValidationFailed
+    end
+
+    return nil
+end
+
+local function notifyStartFailure(target, reason)
+    local message = resolveStartFailureMessage(reason)
+    if not message then
+        return
+    end
+
+    if target > 0 then
+        notifyOne(target, message)
+    else
+        log(message)
+    end
+end
+
 RegisterCommand('disaster_start', function(src, args)
     if not hasAdminPermission(src) then
         if src > 0 then
@@ -967,13 +1998,7 @@ RegisterCommand('disaster_start', function(src, args)
 
     local ok, reason = startDisaster(key, ('admin:%s'):format(src))
     if not ok then
-        if reason == 'night_only' then
-            if src > 0 then
-                notifyOne(src, Config.Locale.blizzardNightOnly)
-            else
-                log(Config.Locale.blizzardNightOnly)
-            end
-        end
+        notifyStartFailure(src, reason)
         return
     end
 
@@ -999,9 +2024,13 @@ end, false)
 
 RegisterCommand('disaster_status', function(src)
     local msg
-    if State.active then
+    if not isSystemEnabled() then
+        msg = Config.Locale.systemUnavailable
+    elseif State.active then
         local remaining = math.max(0, State.active.endsAt - now())
         msg = ('Active: %s | Remaining: %sm'):format(State.active.label, math.ceil(remaining / 60))
+    elseif not isAutomationEnabled() then
+        msg = Config.Locale.automationDisabled
     else
         local eta = math.max(0, State.nextEventAt - now())
         msg = ('No active disaster. Next automation window in ~%sm'):format(math.ceil(eta / 60))
@@ -1012,6 +2041,20 @@ RegisterCommand('disaster_status', function(src)
     else
         log(msg)
     end
+end, false)
+
+RegisterCommand('disasters', function(src)
+    if src <= 0 then
+        log('The /disasters panel can only be opened by an in-game player.')
+        return
+    end
+
+    if not hasAdminPermission(src) then
+        notifyOne(src, Config.Locale.adminOnly)
+        return
+    end
+
+    openPanelFor(src)
 end, false)
 
 RegisterNetEvent('cbk_disasters:server:requestPanelData', function()
@@ -1047,14 +2090,33 @@ RegisterNetEvent('cbk_disasters:server:startDisasterFromPanel', function(data)
     local key = tostring(data.key)
     local ok, reason = startDisaster(key, ('panel:%s'):format(src))
     if not ok then
-        if reason == 'invalid' and src > 0 then
-            notifyOne(src, Config.Locale.invalidDisaster)
-        end
+        notifyStartFailure(src, reason)
         return
     end
 
     if src > 0 then
         notifyOne(src, ('%s %s'):format(Config.Locale.disasterStarted, key))
+    end
+end)
+
+RegisterNetEvent('cbk_disasters:server:setSystemEnabledFromPanel', function(data)
+    local src = source
+    if not hasAdminPermission(src) then
+        if src > 0 then
+            notifyOne(src, Config.Locale.adminOnly)
+        end
+        return
+    end
+
+    if type(data) ~= 'table' or type(data.enabled) ~= 'boolean' then
+        return
+    end
+
+    local changed = setSystemEnabled(data.enabled, ('panel:%s'):format(src))
+    if src > 0 then
+        if changed or isSystemEnabled() == data.enabled then
+            notifyOne(src, data.enabled and Config.Locale.systemEnabled or Config.Locale.systemDisabled)
+        end
     end
 end)
 
@@ -1135,6 +2197,20 @@ AddEventHandler('onResourceStart', function(resourceName)
     if resourceName ~= RESOURCE then return end
     math.randomseed(GetGameTimer() + os.time())
     loadTimingOverrides()
+    local validConfig, issues = validateDisasterConfiguration()
+    if not validConfig then
+        State.systemEnabled = false
+        State.active = nil
+        State.nextEventAt = 0
+        log(('Configuration validation failed with %d issue(s). Refusing to start the disaster system.'):format(#issues))
+        for i = 1, #issues do
+            log(('[config] %s'):format(issues[i]))
+        end
+        SetTimeout(0, function()
+            StopResource(RESOURCE)
+        end)
+        return
+    end
     scheduleNextRandom()
     setGlobalState()
     log('Resource started.')
@@ -1165,7 +2241,7 @@ CreateThread(function()
                 notifyAll(State.active.announcement)
                 State.reminderAt = now() + (Config.Announcements.repeatReminderMinutes * 60)
             end
-        elseif Config.Automation.enabled and State.nextEventAt > 0 and now() >= State.nextEventAt then
+        elseif isAutomationEnabled() and State.nextEventAt > 0 and now() >= State.nextEventAt then
             local key = chooseRandomDisaster()
             if key then
                 startDisaster(key, 'automation')
@@ -1198,3 +2274,6 @@ CreateThread(function()
         end
     end
 end)
+
+
+

@@ -1,59 +1,686 @@
-local currentState = nil
-local lastReminder = 0
-local weatherAppliedAt = 0
-local stateStartedAtMs = 0
-local panelData = nil
-local panelOpen = false
-local activeSmokeHandles = {}
-local activeFireHandles = {}
-local wildfireAnchor = nil
-local wildfireSignature = nil
-local lastAlertSeq = nil
-local tornadoFxHandles = {}
-local tornadoFunnelFxHandles = {}
-local tornadoFunnelFxNodes = {}
-local tornadoFxSignature = nil
-local nextTornadoDebrisAt = 0
-local nextTornadoFunnelRefreshAt = 0
-local tornadoFunnelGroundZ = nil
-local tornadoFunnelGroundRefreshAt = 0
-local blizzardSnowParticles = {}
-local lastAppliedWeatherType = nil
-local lastAppliedWeatherTransition = nil
-local lastAppliedRainLevel = nil
-local lastAppliedWindSpeed = nil
-local lastAppliedTimecycle = nil
-local lastAppliedTimecycleStrength = nil
-local lastAppliedSnowPass = nil
-local lastAppliedSnowLevel = nil
-local lastAppliedVehicleTrails = nil
-local lastAppliedPedTracks = nil
-local forcedTornadoZone = nil
-local forcedTornadoZoneUpdatedAt = 0
-local forcedTornadoZonePredictionWindowMs = 0
-local forcedTornadoZoneVelocityX = 0.0
-local forcedTornadoZoneVelocityY = 0.0
-local forcedTornadoZoneVelocityZ = 0.0
-local tornadoDebugEnabled = false
-local tornadoInteractionLastAudioVolume = -1.0
-local tornadoInteractionLastShakeAt = 0
-local tornadoInteractionLastDamageAt = 0
-local tornadoLiftEntityStates = {}
-local tornadoDebrisPool = {}
-local tornadoDebrisModelCycle = 1
-local zoneRadiusBlip = nil
-local zoneCenterBlip = nil
-local getSmokeDensity
-local getZoneIntensity
-local getStateIntensity
-local removeSmoke
-local stopTornadoFx
-local cleanupTornadoDebrisPool
-local clearTornadoLiftEntityStates
-local setTornadoWindAudio
-local ensurePtfxAsset
+Config = {}
 
-local smokeOffsets = {
+Config.Debug = false
+
+Config.Locale = {
+    prefix = '^3[Disaster Alert]^7 ',
+    fallbackEventName = 'Unknown Event',
+    adminOnly = 'You do not have permission to use this command.',
+    invalidDisaster = 'Invalid disaster key.',
+    blizzardNightOnly = 'Blizzards can only auto-start at night unless you launch one from the panel.',
+    disasterAlreadyActive = 'A disaster is already active. Stop it before starting another one.',
+    disasterConfigDisabled = 'That disaster is disabled in config.',
+    disasterZoneUnavailable = 'That disaster cannot start because its configured zones are missing or invalid.',
+    configValidationFailed = 'Disaster configuration validation failed. Check the server console for details.',
+    invalidTiming = 'Invalid timing values.',
+    timingUpdated = 'Timing values saved.',
+    timingSaveFailed = 'Timing values updated for this session, but saving to disk failed.',
+    systemEnabled = 'Disaster system enabled.',
+    systemDisabled = 'Disaster system disabled.',
+    systemUnavailable = 'The disaster system is currently disabled.',
+    automationDisabled = 'Automatic disasters are disabled.',
+    disasterStarted = 'Disaster started:',
+    disasterStopped = 'Active disaster stopped.',
+    noActiveDisaster = 'There is no active disaster.',
+    nextDisaster = 'Next automatic disaster in approximately',
+    minutes = 'minutes'
+}
+
+Config.Announcements = {
+    enabled = true,
+    useChat = true,
+    useFeedSound = true,
+    repeatReminderMinutes = 5
+}
+-- Server-only admin settings live in `server/config.lua` so identifiers are not sent to clients.
+
+Config.System = {
+    enabled = false -- Startup state for the whole disaster system. The admin panel can still toggle this live.
+}
+
+Config.Automation = {
+    enabled = true,
+    minMinutesBetweenEvents = 35,
+    maxMinutesBetweenEvents = 90,
+    randomizeDuration = true,
+    blizzardNightOnly = true,
+    blizzardNightStartHour = 20,
+    blizzardNightEndHour = 6,
+    blizzardNightUseUtc = false -- false = server local time, true = UTC
+}
+
+Config.Sync = {
+    weatherApplyIntervalMs = 2000,
+    stateBagName = 'cbk_disasters:state',
+    stateRequestCooldownMs = 1500
+}
+
+Config.Intensity = {
+    zoneMinimum = 0.12,
+    curveExponent = 0.80
+}
+
+Config.Transitions = {
+    inMinutes = 3,
+    outMinutes = 3,
+    curveExponent = 1.0
+}
+
+-- Shared/global buckets. Disaster-specific settings are defined in `shared/config/*.lua`.
+Config.Hazards = {
+    tickMs = 2500
+}
+
+Config.Zones = {}
+
+Config.ClientFx = {
+    drawZoneMarkersWhenDebug = false,
+    statusReminderSeconds = 90,
+    debugZoneMarkerAlpha = 60,
+    alertSound = {
+        enabled = true,
+        useNuiSiren = true,
+        sirenDurationMs = 6200,
+        sirenVolume = 0.30,
+        mode = 'bulletin',
+        bulletinLowHz = 853,
+        bulletinHighHz = 960,
+        bulletinOnMs = 950,
+        bulletinOffMs = 260,
+        bulletinCycles = 4,
+        bulletinStaticMs = 120,
+        useFrontendFallback = false,
+        name = '5_SEC_WARNING',
+        set = 'DLC_HEISTS_GENERAL_FRONTEND_SOUNDS',
+        pulses = 2,
+        intervalMs = 220,
+        finalName = 'Event_Start_Text',
+        finalSet = 'GTAO_FM_Events_Soundset'
+    },
+    zoneBlip = {
+        enabled = true,
+        radiusColor = 1,
+        radiusAlpha = 128,
+        radiusMultiplier = 1.35,
+        centerSprite = 161,
+        centerColor = 1,
+        centerScale = 1.15,
+        shortRange = false,
+        flashes = true,
+        flashTimerMs = 15000,
+        showWorldPulse = false,
+        worldPulseMinScale = 1.05,
+        worldPulseMaxScale = 1.45,
+        worldPulseMinAlpha = 85,
+        worldPulseMaxAlpha = 180,
+        worldPulseHeight = 18.0,
+        worldPulseSpeed = 0.004
+    }
+}
+
+
+Disasters = {}
+
+DisasterTimecycles = {
+    default = nil
+}
+
+
+Config.Hazards = Config.Hazards or {}
+Disasters = Disasters or {}
+DisasterTimecycles = DisasterTimecycles or { default = nil }
+
+Config.Hazards.heatwave = {
+    enabled = true,
+    pedestrianDamage = 2,
+    vehicleProtection = true,
+    sprintStaminaDrain = true
+}
+
+Disasters.heatwave = {
+    key = 'heatwave',
+    label = 'Extreme Heat Wave',
+    announcement = 'A dangerous heat wave is now impacting the state. Hydrate, reduce exertion, and avoid long exposure outdoors.',
+    weather = 'EXTRASUNNY',
+    rainLevel = 0.0,
+    windSpeed = 0.0,
+    timecycle = 'heatwave',
+    duration = { min = 18, max = 35 },
+    cooldownMinutes = 45,
+    weight = 12,
+    hazard = 'heatwave',
+    transition = {
+        inMinutes = 4,
+        outMinutes = 4
+    }
+}
+
+DisasterTimecycles.heatwave = 'REDMIST_blend'
+
+
+Config.Hazards = Config.Hazards or {}
+Disasters = Disasters or {}
+DisasterTimecycles = DisasterTimecycles or { default = nil }
+
+Config.Hazards.thunderstorm = {
+    enabled = true,
+    lightningStrikeChance = 0.022, -- per eligible player per tick
+    strikeRadius = 6.0,
+    strikeDamage = 20
+}
+
+Disasters.thunderstorm = {
+    key = 'thunderstorm',
+    label = 'Severe Thunderstorm',
+    announcement = 'A severe thunderstorm has developed. Expect lightning, reduced visibility, and hazardous driving conditions.',
+    weather = 'THUNDER',
+    rainLevel = 0.85,
+    windSpeed = 0.75,
+    timecycle = 'storm',
+    duration = { min = 16, max = 28 },
+    cooldownMinutes = 35,
+    weight = 14,
+    hazard = 'thunderstorm',
+    transition = {
+        inMinutes = 3,
+        outMinutes = 3
+    }
+}
+
+DisasterTimecycles.storm = 'Rainy'
+DisasterTimecycles.storm_dark = 'BarryFadeOut'
+
+
+Config.Hazards = Config.Hazards or {}
+Config.Zones = Config.Zones or {}
+Config.ClientFx = Config.ClientFx or {}
+Disasters = Disasters or {}
+
+Config.Hazards.tornado = {
+    enabled = true,
+    pullRadius = 120.0,
+    lethalCoreRadius = 10.0,
+    maxForceDistance = 105.0,
+    vehicleEngineStallChance = 0.20,
+    debrisDamage = 4,
+    movement = {
+        enabled = true,
+        minSpeed = 1.0,
+        maxSpeed = 4.0,
+        turnIntervalMinMs = 3200,
+        turnIntervalMaxMs = 6400,
+        turnJitterDegrees = 24.0,
+        turnTowardCenterWeight = 0.14,
+        zoneRadiusRatio = 1.0,
+        maxTravelRadius = 2200.0,
+        updateIntervalMs = 100,
+        broadcastIntervalMs = 250,
+        broadcastUpdates = true
+    }
+}
+
+Config.Zones.tornado = {
+    { name = 'Grapeseed', coords = vec3(2468.5, 4781.9, 34.6), radius = 2100.0 },
+    { name = 'Sandy Shores', coords = vec3(1735.8, 3298.1, 41.1), radius = 2400.0 },
+    { name = 'Great Chaparral', coords = vec3(-104.3, 1920.6, 196.9), radius = 2200.0 },
+    { name = 'Paleto Bay', coords = vec3(-160.0, 6225.0, 30.0), radius = 2000.0 },
+    { name = 'Mount Chiliad', coords = vec3(450.0, 5560.0, 800.0), radius = 2400.0 },
+    { name = 'Raton Canyon', coords = vec3(-150.0, 4415.0, 100.0), radius = 2200.0 }
+}
+
+Config.ClientFx.tornadoParticle = {
+    enabled = true,
+    asset = 'scr_rcbarry2',
+    effect = 'scr_rcbarry2_trail',
+    scale = 3.4,
+    heightOffset = 2.5,
+    heightOffsets = { 2.5, 10.0, 18.0 },
+    scales = { 3.8, 2.7, 1.8 },
+    farClipDistance = 500.0,
+    debrisEffect = 'scr_fbi_falling_debris',
+    debrisBurstScale = 1.55,
+    debrisBurstRadius = 30.0,
+    debrisBurstIntervalMs = 1200
+}
+
+Config.ClientFx.tornadoFunnel = {
+    enabled = true,
+    asset = 'core',
+    effect = 'ent_amb_smoke_foundry',
+    effects = {
+        'ent_amb_smoke_foundry'
+    },
+    layers = 120,
+    baseRadius = 1.0,
+    topRadius = 4.5,
+    baseHeight = -1.2,
+    topHeight = 200.0,
+    baseScale = 2.6,
+    topScale = 8.0,
+    swirlDegreesPerLayer = 55.0,
+    rotationSpeed = 1.8,
+    refreshIntervalMs = 250,
+    farClipDistance = 500.0,
+    maxHandles = 40,
+    innerFillCount = 6,
+    topCloudEffect = 'ent_amb_smoke_foundry',
+    topCloudScale = 7.8,
+    topCloudHeight = 145.0,
+    drawSolidFunnel = false,
+    drawLayers = 120,
+    drawBaseRadius = 30.0,
+    drawTopRadius = 3.0,
+    drawBaseHeight = 2.0,
+    drawTopHeight = 222.0,
+    drawSwirlRadius = 4.8,
+    drawSwirlSpeed = 4.0,
+    drawAlphaBase = 240,
+    drawAlphaTop = 28,
+    drawColor = { r = 60, g = 60, b = 60 },
+    drawConeShell = false,
+    drawSegments = 30,
+    drawShellAlpha = 125,
+    drawShellColor = { r = 52, g = 52, b = 52 },
+    drawLineFunnel = false,
+    drawLineCount = 26,
+    drawLineAlpha = 140,
+    drawLineColor = { r = 95, g = 95, b = 95 },
+    drawCenterBeacon = false,
+    drawBeaconColor = { r = 220, g = 220, b = 220 },
+    drawBeaconAlpha = 80,
+    drawBeaconScale = 15.5,
+    drawVolumetricCloud = false,
+    volumetricBands = 6,
+    volumetricPuffsPerBand = 6,
+    volumetricAlphaBase = 60,
+    volumetricAlphaTop = 34,
+    volumetricColor = { r = 70, g = 70, b = 70 },
+    volumetricDrift = 0.55
+}
+
+Config.ClientFx.tornadoInteraction = {
+    enabled = true,
+    maxDistance = 260.0,
+    forceIntervalMs = 70,
+    closeRangeDistance = 30.0,
+    extremeCoreDistance = 10.0,
+    damageTickMs = 1600,
+    player = {
+        enabled = true,
+        maxDistance = 40.0,
+        maxPull = 6.25,
+        maxLift = 3.35,
+        maxSpin = 1.95,
+        pullVelocity = 8.5,
+        spinVelocity = 4.1,
+        liftVelocity = 7.8,
+        groundedLiftVelocity = 3.4,
+        minVerticalVelocity = 2.2,
+        maxVerticalVelocity = 14.0,
+        velocityPreserveFactor = 0.45,
+        ragdollThreshold = 0.10,
+        liftedRagdollThreshold = 0.06,
+        ragdollTimeMs = 2200,
+        maintainRagdollIntervalMs = 280,
+        releaseDistance = 18.0,
+        releaseRearmDistance = 62.0,
+        releaseForceScaleThreshold = 0.82,
+        releaseAfterMs = 1750,
+        releaseCooldownMs = 4200,
+        releaseOutVelocity = 42.0,
+        releaseUpVelocity = 11.5,
+        releaseSpinVelocity = 5.4,
+        releaseVelocityPreserveFactor = 0.10,
+        velocityClamp = 38.0
+    },
+    peds = {
+        enabled = true,
+        searchRadius = 40.0,
+        sweepIntervalMs = 350,
+        maxSweepCount = 10,
+        maxPull = 2.45,
+        maxLift = 0.86,
+        maxSpin = 0.90,
+        pullVelocity = 4.8,
+        spinVelocity = 2.0,
+        liftVelocity = 4.6,
+        groundedLiftVelocity = 1.8,
+        minVerticalVelocity = 1.2,
+        maxVerticalVelocity = 9.0,
+        velocityPreserveFactor = 0.52,
+        ragdollThreshold = 0.18,
+        ragdollTimeMs = 1800,
+        velocityClamp = 20.0
+    },
+    camera = {
+        enabled = true,
+        shakeName = 'SKY_DIVING_SHAKE',
+        baseAmplitude = 0.10,
+        maxAmplitude = 0.52,
+        updateIntervalMs = 120
+    },
+    sound = {
+        enabled = true,
+        maxDistance = 260.0,
+        baseVolume = 0.02,
+        maxVolume = 0.26,
+        lowpassHz = 420,
+        highpassHz = 36,
+        centerBoostDistance = 70.0
+    },
+    vehicle = {
+        enabled = true,
+        maxDistance = 30.0,
+        sweepRadius = 40.0,
+        sweepIntervalMs = 450,
+        maxSweepCount = 8,
+        maxLift = 6.00,
+        maxPull = 8.6,
+        maxSpin = 4.80,
+        pullVelocity = 10.4,
+        spinVelocity = 6.4,
+        liftVelocity = 7.4,
+        groundedLiftVelocity = 4.6,
+        minVerticalVelocity = 1.4,
+        maxVerticalVelocity = 15.5,
+        velocityPreserveFactor = 0.58,
+        releaseDistance = 18.0,
+        releaseRearmDistance = 40.0,
+        releaseForceScaleThreshold = 0.82,
+        releaseAfterMs = 3400,
+        releaseCooldownMs = 4200,
+        releaseOutVelocity = 42.0,
+        releaseUpVelocity = 15.0,
+        releaseSpinVelocity = 8.0,
+        releaseVelocityPreserveFactor = 0.08,
+        velocityClamp = 58.0
+    },
+    debrisPool = {
+        enabled = true,
+        maxDistance = 100.0,
+        poolSizeNear = 16,
+        poolSizeMid = 10,
+        poolSizeFar = 6,
+        updateIntervalMs = 250,
+        modelNames = {
+            'prop_rub_tyre_01',
+            'prop_trafficcone_01a',
+            'prop_boxpile_06b',
+            'prop_crate_11e',
+            'prop_cardbordbox_04a',
+            'prop_bin_08open',
+            'prop_bucket_02a',
+            { name = 'a_c_cow', entityType = 'ped' }
+        },
+        spawnRadius = 30.0,
+        minHeight = 2.0,
+        maxHeight = 28.0,
+        orbitSpeed = 1.4,
+        riseSpeed = 6.8,
+        despawnHeight = 32.0,
+        collision = false
+    }
+}
+
+Disasters.tornado = {
+    key = 'tornado',
+    label = 'Tornado Warning',
+    announcement = 'A tornado warning is in effect. Take cover immediately and avoid open roads near the impact corridor.',
+    weather = 'THUNDER',
+    rainLevel = 1.00,
+    windSpeed = 1.00,
+    duration = { min = 10, max = 18 },
+    cooldownMinutes = 80,
+    weight = 5,
+    hazard = 'tornado',
+    transition = {
+        inMinutes = 2,
+        outMinutes = 2
+    },
+    requiresZone = 'tornado'
+}
+
+
+Config.Hazards = Config.Hazards or {}
+Config.ClientFx = Config.ClientFx or {}
+Disasters = Disasters or {}
+
+Config.Hazards.blizzard = {
+    enabled = true,
+    pedestrianDamage = 1
+}
+
+Config.ClientFx.blizzard = {
+    earlyWeather = 'XMAS',
+    buildupWeather = 'XMAS',
+    snowCoverWeather = 'XMAS',
+    enableGlobalSnowCover = true,
+    trackThreshold = 0.0,
+    snowCoverThreshold = 0.0,
+    weatherTransitionSeconds = 1.5,
+    forceSnowPass = true,
+    snowLevelMin = 1.00,
+    snowLevelMax = 1.00,
+    weatherWindBase = 2.00,
+    weatherWindExtra = 1.50,
+    timecycleBoost = 0.80,
+    fogStrength = 1.00,
+    windBaseSpeed = 2.20,
+    windMaxSpeed = 3.60,
+    windBaseDirection = 235.0,
+    windSwingDegrees = 92.0,
+    windGustSpeed = 1.35,
+    windGustAmplitude = 0.70,
+    windMicroGustSpeed = 2.95,
+    windMicroGustAmplitude = 0.28,
+    particleCountMin = 800,
+    particleCountMax = 1000,
+    particleRadius = 30.0,
+    particleNearBias = 2.25,
+    particleHeightMin = 0.25,
+    particleHeightMax = 20.0,
+    particleFallSpeedMin = 6.0,
+    particleFallSpeedMax = 14.0,
+    particleWindDriftScale = 8.0,
+    particleTrailMin = 0.10,
+    particleTrailMax = 0.24,
+    particleAlpha = 1600,
+    particleMarkerFraction = 0.00,
+    particleMarkerMinScale = 0.050,
+    particleMarkerMaxScale = 0.100,
+    particleColor = { r = 240, g = 245, b = 255 },
+    hazeMinAlpha = 100,
+    hazeMaxAlpha = 180,
+    hazeAccentMaxAlpha = 150,
+    hazeColor = { r = 236, g = 242, b = 252 },
+    hazeAccentColor = { r = 214, g = 226, b = 242 }
+}
+
+Disasters.blizzard = {
+    key = 'blizzard',
+    label = 'Blizzard Conditions',
+    announcement = 'Whiteout blizzard conditions are impacting northern areas. Travel is strongly discouraged.',
+    weather = 'XMAS',
+    rainLevel = 0.0,
+    windSpeed = 1.00,
+    duration = { min = 18, max = 30 },
+    cooldownMinutes = 80,
+    weight = 6,
+    hazard = 'blizzard',
+    transition = {
+        inMinutes = 5,
+        outMinutes = 5
+    }
+}
+
+
+Config.Hazards = Config.Hazards or {}
+Config.Zones = Config.Zones or {}
+Disasters = Disasters or {}
+DisasterTimecycles = DisasterTimecycles or { default = nil }
+
+Config.Hazards.duststorm = {
+    enabled = true,
+    pedestrianDamage = 1
+}
+
+Config.Zones.duststorm = {
+    { name = 'Grand Senora Desert', coords = vec3(1880.0, 3560.0, 40.0), radius = 650.0 },
+    { name = 'Sandy Shores', coords = vec3(1735.8, 3298.1, 41.1), radius = 650.0 },
+    { name = 'Algonquin', coords = vec3(-300.0, 2000.0, 100.0), radius = 450.0 },
+    { name = 'Grapeseed', coords = vec3(2468.5, 4781.9, 34.6), radius = 650.0 }
+}
+
+Disasters.duststorm = {
+    key = 'duststorm',
+    label = 'Dust Storm Advisory',
+    announcement = 'A dense dust storm is reducing visibility across desert regions. Slow down and use caution.',
+    weather = 'SMOG',
+    rainLevel = 0.0,
+    windSpeed = 1.00,
+    timecycle = 'sandstorm',
+    duration = { min = 16, max = 26 },
+    cooldownMinutes = 50,
+    weight = 10,
+    hazard = 'duststorm',
+    transition = {
+        inMinutes = 3,
+        outMinutes = 3
+    },
+    requiresZone = 'duststorm'
+}
+
+DisasterTimecycles.sandstorm = 'underwater_deep'
+
+
+Config.Hazards = Config.Hazards or {}
+Config.Zones = Config.Zones or {}
+Config.ClientFx = Config.ClientFx or {}
+Disasters = Disasters or {}
+DisasterTimecycles = DisasterTimecycles or { default = nil }
+
+Config.Hazards.wildfire_smoke = {
+    enabled = true,
+    pedestrianDamage = 1
+}
+
+Config.Zones.wildfire_smoke = {
+    { name = 'Tongva Hills', coords = vec3(-1462.0, 1322.0, 145.0), radius = 600.0 },
+    { name = 'Raton Canyon', coords = vec3(-150.0, 4415.0, 100.0), radius = 700.0 },
+    { name = 'Mount Chiliad', coords = vec3(450.0, 5560.0, 800.0), radius = 900.0 },
+    { name = 'Great Chaparral', coords = vec3(-104.3, 1920.6, 196.9), radius = 700.0 }
+}
+
+Config.ClientFx.wildfireSmoke = {
+    asset = 'core',
+    effect = 'exp_grd_grenade_smoke',
+    effects = {
+        'ent_amb_smoke_foundry',
+        'exp_grd_grenade_smoke',
+        'exp_extinguisher'
+    },
+    smokeScale = 7.5,
+    smokeFarClipDistance = 900.0,
+    maxDistance = 800.0,
+    minPlumes = 5,
+    maxPlumes = 20,
+    plumeRadius = 56.0,
+    plumeHeightOffset = 0.2,
+    refreshDistance = 14.0,
+    enableFire = true,
+    minFires = 8,
+    maxFires = 16,
+    fireRadius = 24.0,
+    fireMaxChildren = 1,
+    overlayMinAlpha = 46,
+    overlayMaxAlpha = 210,
+    overlayColor = { r = 224, g = 96, b = 24 },
+    accentOverlayMaxAlpha = 95,
+    accentOverlayColor = { r = 142, g = 28, b = 12 }
+}
+
+Disasters.wildfire_smoke = {
+    key = 'wildfire_smoke',
+    label = 'Wildfire Smoke Event',
+    announcement = 'Heavy wildfire smoke is affecting air quality. Limit outdoor exposure and expect poor visibility in affected areas.',
+    weather = 'FOGGY',
+    rainLevel = 0.0,
+    windSpeed = 0.20,
+    timecycle = 'forestfire',
+    duration = { min = 18, max = 32 },
+    cooldownMinutes = 55,
+    weight = 9,
+    hazard = 'wildfire_smoke',
+    transition = {
+        inMinutes = 4,
+        outMinutes = 4
+    },
+    requiresZone = 'wildfire_smoke'
+}
+
+DisasterTimecycles.forestfire = 'REDMIST'
+
+
+currentState = nil
+clientCoreReady = false
+lastReminder = 0
+weatherAppliedAt = 0
+stateStartedAtMs = 0
+panelData = nil
+panelOpen = false
+activeSmokeHandles = {}
+activeFireHandles = {}
+wildfireAnchor = nil
+wildfireObserverAnchor = nil
+wildfireSignature = nil
+lastAlertSeq = nil
+tornadoFxHandles = {}
+tornadoFunnelFxHandles = {}
+tornadoFunnelFxNodes = {}
+tornadoFxSignature = nil
+nextTornadoDebrisAt = 0
+nextTornadoFunnelRefreshAt = 0
+tornadoFunnelGroundZ = nil
+tornadoFunnelGroundRefreshAt = 0
+blizzardSnowParticles = {}
+lastAppliedWeatherType = nil
+lastAppliedWeatherTransition = nil
+lastAppliedRainLevel = nil
+lastAppliedWindSpeed = nil
+lastAppliedTimecycle = nil
+lastAppliedTimecycleStrength = nil
+lastAppliedSnowPass = nil
+lastAppliedSnowLevel = nil
+lastAppliedVehicleTrails = nil
+lastAppliedPedTracks = nil
+forcedTornadoZone = nil
+forcedTornadoZoneUpdatedAt = 0
+forcedTornadoZonePredictionWindowMs = 0
+forcedTornadoZoneVelocityX = 0.0
+forcedTornadoZoneVelocityY = 0.0
+forcedTornadoZoneVelocityZ = 0.0
+tornadoDebugEnabled = false
+tornadoInteractionLastAudioVolume = -1.0
+tornadoInteractionLastShakeAt = 0
+tornadoInteractionLastDamageAt = 0
+tornadoLiftEntityStates = {}
+tornadoNextPedSweepAt = 0
+tornadoNextVehicleSweepAt = 0
+tornadoDebrisPool = {}
+tornadoDebrisModelCycle = 1
+zoneRadiusBlip = nil
+zoneCenterBlip = nil
+getSmokeDensity = nil
+getZoneIntensity = nil
+getStateIntensity = nil
+removeSmoke = nil
+stopTornadoFx = nil
+cleanupTornadoDebrisPool = nil
+clearTornadoLiftEntityStates = nil
+setTornadoWindAudio = nil
+ensurePtfxAsset = nil
+
+smokeOffsets = {
     { x = 0.0, y = 0.0 },
     { x = 7.0, y = 4.0 },
     { x = -6.5, y = 5.5 },
@@ -62,7 +689,7 @@ local smokeOffsets = {
     { x = 3.5, y = -8.5 },
 }
 
-local function getStateHazard(state)
+function getStateHazard(state)
     if not state then
         return nil
     end
@@ -83,7 +710,7 @@ local function getStateHazard(state)
     return nil
 end
 
-local function getCurrentUnixTime()
+function getCurrentUnixTime()
     local cloudTime = GetCloudTimeAsInt()
     if type(cloudTime) == 'number' and cloudTime > 0 then
         return cloudTime
@@ -92,7 +719,7 @@ local function getCurrentUnixTime()
     return 0
 end
 
-local function getDisasterProgress(state)
+function getDisasterProgress(state)
     if not state then
         return 0.0
     end
@@ -115,13 +742,80 @@ local function getDisasterProgress(state)
     return 0.0
 end
 
-local function notify(message, playSound)
+function getDisasterTransitionConfig(state)
+    local defaults = Config.Transitions or {}
+    local transition = state and state.transition or {}
+    local inSeconds = tonumber(transition.inSeconds)
+    local outSeconds = tonumber(transition.outSeconds)
+
+    if inSeconds == nil then
+        inSeconds = math.max(0, math.floor((tonumber(transition.inMinutes) or tonumber(defaults.inMinutes) or 3) * 60))
+    else
+        inSeconds = math.max(0, math.floor(inSeconds))
+    end
+
+    if outSeconds == nil then
+        outSeconds = math.max(0, math.floor((tonumber(transition.outMinutes) or tonumber(defaults.outMinutes) or 3) * 60))
+    else
+        outSeconds = math.max(0, math.floor(outSeconds))
+    end
+
+    local curveExponent = math.max(0.1, tonumber(transition.curveExponent) or tonumber(defaults.curveExponent) or 1.0)
+
+    return {
+        inSeconds = inSeconds,
+        outSeconds = outSeconds,
+        curveExponent = curveExponent
+    }
+end
+
+function shapeTransitionIntensity(ratio, exponent)
+    if ratio <= 0.0 then
+        return 0.0
+    end
+
+    if ratio >= 1.0 then
+        return 1.0
+    end
+
+    return ratio ^ (tonumber(exponent) or 1.0)
+end
+
+function getDisasterTransitionIntensity(state)
+    if not state then
+        return 0.0
+    end
+
+    local duration = tonumber(state.durationSeconds) or 0
+    if duration <= 0 then
+        return 1.0
+    end
+
+    local transition = getDisasterTransitionConfig(state)
+    local unixTime = getCurrentUnixTime()
+    local elapsed = 0
+    local remaining = duration
+
+    if unixTime > 0 and state.startedAt then
+        elapsed = math.max(0, unixTime - state.startedAt)
+        remaining = math.max(0, (state.endsAt or (state.startedAt + duration)) - unixTime)
+    elseif stateStartedAtMs > 0 then
+        elapsed = math.max(0, math.floor((GetGameTimer() - stateStartedAtMs) / 1000.0))
+        remaining = math.max(0, duration - elapsed)
+    end
+
+    local fadeInRatio = transition.inSeconds > 0 and math.min(1.0, elapsed / transition.inSeconds) or 1.0
+    local fadeOutRatio = transition.outSeconds > 0 and math.min(1.0, remaining / transition.outSeconds) or 1.0
+    return shapeTransitionIntensity(math.min(fadeInRatio, fadeOutRatio), transition.curveExponent)
+end
+
+function notify(message, playSound)
     BeginTextCommandThefeedPost('STRING')
     AddTextComponentSubstringPlayerName(message)
     EndTextCommandThefeedPostTicker(playSound == true, false)
 end
 
-local function nearlyEqual(a, b, epsilon)
+function nearlyEqual(a, b, epsilon)
     local left = tonumber(a)
     local right = tonumber(b)
     if left == nil or right == nil then
@@ -131,7 +825,7 @@ local function nearlyEqual(a, b, epsilon)
     return math.abs(left - right) <= (epsilon or 0.001)
 end
 
-local function getBlizzardWindState(cfg, intensity)
+function getBlizzardWindState(cfg, intensity)
     local nowSec = GetGameTimer() / 1000.0
     local gust = math.sin(nowSec * (cfg.windGustSpeed or 0.70)) * (cfg.windGustAmplitude or 0.34)
     local microGust = math.cos(nowSec * (cfg.windMicroGustSpeed or 1.85)) * (cfg.windMicroGustAmplitude or 0.12)
@@ -147,7 +841,7 @@ local function getBlizzardWindState(cfg, intensity)
     return gust, directionDegrees, math.rad(directionDegrees), windSpeed
 end
 
-local function stopBlizzardFx()
+function stopBlizzardFx()
     blizzardSnowParticles = {}
 
     if SetWindDirection then
@@ -155,15 +849,20 @@ local function stopBlizzardFx()
     end
 end
 
-local function getBlizzardVisualIntensity(zone)
+function getBlizzardVisualIntensity(zone)
+    local transitionIntensity = getDisasterTransitionIntensity(currentState)
+    if transitionIntensity <= 0.0 then
+        return 0.0
+    end
+
     if zone and zone.coords then
-        return getZoneIntensity(zone)
+        return getZoneIntensity(zone) * transitionIntensity
     end
 
     return getStateIntensity(currentState)
 end
 
-local function updateBlizzardFx(zone)
+function updateBlizzardFx(zone)
     local intensity = getBlizzardVisualIntensity(zone)
     if intensity <= 0.0 then
         stopBlizzardFx()
@@ -191,7 +890,7 @@ local function updateBlizzardFx(zone)
     end
 end
 
-local function respawnBlizzardSnowParticle(index, cfg, intensity, topOnly, windX, windY)
+function respawnBlizzardSnowParticle(index, cfg, intensity, topOnly, windX, windY)
     local radius = (cfg.particleRadius or 28.0) * (0.90 + (intensity * 0.35))
     local minHeight = cfg.particleHeightMin or 3.0
     local maxHeight = math.max(minHeight + 1.0, cfg.particleHeightMax or 26.0)
@@ -228,7 +927,7 @@ local function respawnBlizzardSnowParticle(index, cfg, intensity, topOnly, windX
     }
 end
 
-local function updateBlizzardSnow(zone)
+function updateBlizzardSnow(zone)
     local intensity = getBlizzardVisualIntensity(zone)
     if intensity <= 0.0 then
         blizzardSnowParticles = {}
@@ -326,7 +1025,7 @@ RegisterNetEvent('cbk_disasters:client:notify', function(message, playSound)
     notify(message, playSound)
 end)
 
-local function closePanel()
+function closePanel()
     if not panelOpen then return end
     panelOpen = false
     SetNuiFocus(false, false)
@@ -334,7 +1033,7 @@ local function closePanel()
     TriggerServerEvent('cbk_disasters:server:panelClosed')
 end
 
-local function openPanel(data)
+function openPanel(data)
     if data ~= nil then
         panelData = data
     end
@@ -390,7 +1089,16 @@ RegisterNUICallback('updateDisasterTimes', function(data, cb)
     cb('ok')
 end)
 
-local function resetWeather()
+RegisterNUICallback('setSystemEnabled', function(data, cb)
+    if data and type(data.enabled) == 'boolean' then
+        TriggerServerEvent('cbk_disasters:server:setSystemEnabledFromPanel', {
+            enabled = data.enabled
+        })
+    end
+    cb('ok')
+end)
+
+function resetWeather()
     StopGameplayCamShaking(true)
     ClearOverrideWeather()
     ClearWeatherTypePersist()
@@ -422,11 +1130,11 @@ local function resetWeather()
     lastAppliedPedTracks = nil
 end
 
-local function getTimecycleModifier(key)
+function getTimecycleModifier(key)
     return DisasterTimecycles[key] or DisasterTimecycles.default
 end
 
-local function removeZoneBlips()
+function removeZoneBlips()
     if zoneRadiusBlip and DoesBlipExist(zoneRadiusBlip) then
         RemoveBlip(zoneRadiusBlip)
     end
@@ -439,7 +1147,7 @@ local function removeZoneBlips()
     zoneCenterBlip = nil
 end
 
-local function updateZoneBlips(state)
+function updateZoneBlips(state)
     removeZoneBlips()
 
     local cfg = Config.ClientFx.zoneBlip or {}
@@ -472,7 +1180,7 @@ local function updateZoneBlips(state)
     EndTextCommandSetBlipName(zoneCenterBlip)
 end
 
-local function syncZoneBlipPosition(zone)
+function syncZoneBlipPosition(zone)
     if not zone or not zone.coords then
         return
     end
@@ -486,7 +1194,7 @@ local function syncZoneBlipPosition(zone)
     end
 end
 
-local function applyDisasterWeather(state)
+function applyDisasterWeather(state)
     if not state then
         resetWeather()
         return
@@ -495,15 +1203,14 @@ local function applyDisasterWeather(state)
     local hazard = getStateHazard(state)
     local targetWeather = state.weather
     local blizzardAccumulation = 0.0
+    local transitionIntensity = getDisasterTransitionIntensity(state)
     local blizzardCfg = Config.ClientFx.blizzard or {}
     if hazard == 'blizzard' then
-        local progress = getDisasterProgress(state)
-        local zoneIntensity = getStateIntensity(state)
         local allowGlobalSnowCover = blizzardCfg.enableGlobalSnowCover == true
         local fogStrength = math.max(0.0, math.min(1.0, tonumber(blizzardCfg.fogStrength) or 0.0))
         local buildupThreshold = 0.02 + (0.22 * fogStrength)
         local snowCoverThreshold = math.max(blizzardCfg.snowCoverThreshold or 0.10, 0.12 + (0.68 * fogStrength))
-        blizzardAccumulation = math.max(0.0, math.min(1.0, (progress * 0.72) + (zoneIntensity * 0.28)))
+        blizzardAccumulation = math.max(0.0, math.min(1.0, transitionIntensity))
 
         if allowGlobalSnowCover and blizzardAccumulation >= snowCoverThreshold then
             targetWeather = blizzardCfg.snowCoverWeather or 'XMAS'
@@ -581,15 +1288,15 @@ local function applyDisasterWeather(state)
         lastAppliedWeatherTransition = weatherTransition
     end
 
-    local rainLevel = state.rainLevel or 0.0
+    local rainLevel = (state.rainLevel or 0.0) * transitionIntensity
     if not nearlyEqual(lastAppliedRainLevel, rainLevel, 0.01) then
         SetRainLevel(rainLevel)
         lastAppliedRainLevel = rainLevel
     end
 
-    local windSpeed = state.windSpeed or 0.0
+    local windSpeed = (state.windSpeed or 0.0) * transitionIntensity
     if hazard == 'blizzard' then
-        local baseWind = math.max(state.windSpeed or 0.0, blizzardCfg.weatherWindBase or 1.05)
+        local baseWind = math.max((state.windSpeed or 0.0) * transitionIntensity, (blizzardCfg.weatherWindBase or 1.05) * transitionIntensity)
         windSpeed = baseWind + (blizzardAccumulation * (blizzardCfg.weatherWindExtra or 0.80))
     end
 
@@ -634,7 +1341,7 @@ local function applyDisasterWeather(state)
     end
 end
 
-local function playAlertTone()
+function playAlertTone()
     local cfg = Config.ClientFx.alertSound or {}
     if cfg.enabled == false then
         return
@@ -677,7 +1384,7 @@ local function playAlertTone()
     end
 end
 
-local function setState(state)
+function setState(state)
     if state then
         local hazard = getStateHazard(state)
         if hazard then
@@ -735,7 +1442,7 @@ local function setState(state)
     end
 end
 
-local function getPredictedForcedTornadoZone()
+function getPredictedForcedTornadoZone()
     if not forcedTornadoZone or not forcedTornadoZone.coords then
         return nil
     end
@@ -767,7 +1474,7 @@ local function getPredictedForcedTornadoZone()
     }
 end
 
-local function getActiveTornadoZone()
+function getActiveTornadoZone()
     local stateHazard = getStateHazard(currentState)
     local predictedForcedZone = getPredictedForcedTornadoZone()
     if stateHazard == 'tornado' and predictedForcedZone and predictedForcedZone.coords then
@@ -781,7 +1488,7 @@ local function getActiveTornadoZone()
     return nil
 end
 
-local function distanceBetween(a, b)
+function distanceBetween(a, b)
     local dx = a.x - b.x
     local dy = a.y - b.y
     local dz = a.z - b.z
@@ -817,20 +1524,31 @@ getStateIntensity = function(state)
         return 0.0
     end
 
-    if state.context and state.context.zone then
-        return getZoneIntensity(state.context.zone)
+    local transitionIntensity = getDisasterTransitionIntensity(state)
+    if transitionIntensity <= 0.0 then
+        return 0.0
     end
 
-    return 1.0
+    if state.context and state.context.zone then
+        return getZoneIntensity(state.context.zone) * transitionIntensity
+    end
+
+    return transitionIntensity
 end
 
 getSmokeDensity = function(zone)
     local cfg = Config.ClientFx.wildfireSmoke or {}
     local radius = cfg.maxDistance or (zone and zone.radius) or 400.0
-    return getZoneIntensity(zone, radius)
+    return getZoneIntensity(zone, radius) * getDisasterTransitionIntensity(currentState)
 end
 
-local function drawDebugTextLine(x, y, text, r, g, b, a, scale)
+clientCoreReady = true
+
+
+
+clientEffectsReady = false
+
+function drawDebugTextLine(x, y, text, r, g, b, a, scale)
     SetTextFont(0)
     SetTextProportional(true)
     SetTextScale(scale or 0.31, scale or 0.31)
@@ -843,7 +1561,7 @@ local function drawDebugTextLine(x, y, text, r, g, b, a, scale)
     DrawText(x, y)
 end
 
-local function drawTornadoDebugHud()
+function drawTornadoDebugHud()
     local zone = getActiveTornadoZone()
     local pedCoords = GetEntityCoords(PlayerPedId())
     local hasCurrent = currentState and 'yes' or 'no'
@@ -898,10 +1616,11 @@ removeSmoke = function()
     activeSmokeHandles = {}
     activeFireHandles = {}
     wildfireAnchor = nil
+    wildfireObserverAnchor = nil
     wildfireSignature = nil
 end
 
-local function getGroundPosition(x, y, fallbackZ)
+function getGroundPosition(x, y, fallbackZ)
     local foundGround, groundZ = GetGroundZFor_3dCoord(x, y, fallbackZ + 50.0, false)
     if foundGround then
         return groundZ
@@ -945,7 +1664,7 @@ setTornadoWindAudio = function(volume, cfg)
     })
 end
 
-local function getTornadoInteractionIntensity(zone, maxDistance)
+function getTornadoInteractionIntensity(zone, maxDistance)
     if not zone or not zone.coords then
         return 0.0, 99999.0
     end
@@ -957,12 +1676,17 @@ local function getTornadoInteractionIntensity(zone, maxDistance)
         return 0.0, dist
     end
 
+    local transitionIntensity = getDisasterTransitionIntensity(currentState)
+    if transitionIntensity <= 0.0 then
+        return 0.0, dist
+    end
+
     local raw = 1.0 - math.min(dist / radius, 1.0)
-    local shaped = raw * raw
+    local shaped = (raw * raw) * transitionIntensity
     return shaped, dist
 end
 
-local function getDebrisPoolTargetCount(dist, cfg)
+function getDebrisPoolTargetCount(dist, cfg)
     if dist <= 65.0 then
         return math.max(1, math.floor(cfg.poolSizeNear or 16))
     elseif dist <= 95.0 then
@@ -974,7 +1698,7 @@ local function getDebrisPoolTargetCount(dist, cfg)
     return 0
 end
 
-local function getTornadoDebrisModelSpec(entry)
+function getTornadoDebrisModelSpec(entry)
     if type(entry) == 'string' and entry ~= '' then
         return entry, 'object'
     end
@@ -996,7 +1720,7 @@ local function getTornadoDebrisModelSpec(entry)
     return modelName, entityType
 end
 
-local function chooseTornadoDebrisModel(cfg)
+function chooseTornadoDebrisModel(cfg)
     local names = cfg.modelNames or {}
     if #names == 0 then
         return nil, nil
@@ -1018,7 +1742,7 @@ local function chooseTornadoDebrisModel(cfg)
     return nil, nil
 end
 
-local function ensureDebrisEntry(index, zone, cfg)
+function ensureDebrisEntry(index, zone, cfg)
     local entry = tornadoDebrisPool[index]
     if entry and entry.entity and DoesEntityExist(entry.entity) then
         return entry
@@ -1079,7 +1803,7 @@ local function ensureDebrisEntry(index, zone, cfg)
     return entry
 end
 
-local function updateTornadoDebrisPool(zone)
+function updateTornadoDebrisPool(zone)
     local cfg = (Config.ClientFx.tornadoInteraction or {}).debrisPool or {}
     if cfg.enabled == false then
         cleanupTornadoDebrisPool()
@@ -1130,7 +1854,7 @@ local function updateTornadoDebrisPool(zone)
     end
 end
 
-local function updateTornadoInteraction(zone)
+function updateTornadoInteraction(zone)
     local interactionCfg = Config.ClientFx.tornadoInteraction or {}
     if interactionCfg.enabled == false or not zone or not zone.coords then
         setTornadoWindAudio(0.0, interactionCfg.sound or {})
@@ -1173,7 +1897,7 @@ local function updateTornadoInteraction(zone)
     end
 end
 
-local function computeWildfirePositions(anchor, density, plumeCount, fireCount, cfg)
+function computeWildfirePositions(anchor, density, plumeCount, fireCount, cfg)
     local positions = {}
     local smokeRadius = (cfg.plumeRadius or 14.0) * (0.65 + (density * 0.85))
     local fireRadius = (cfg.fireRadius or 10.0) * (0.65 + (density * 0.75))
@@ -1196,8 +1920,13 @@ local function computeWildfirePositions(anchor, density, plumeCount, fireCount, 
     return positions
 end
 
-local function rebuildWildfireFx(zone, density)
+function rebuildWildfireFx(zone, density)
     local cfg = Config.ClientFx.wildfireSmoke or {}
+    if not zone or not zone.coords then
+        removeSmoke()
+        return
+    end
+
     local plumeCount = math.max(1, math.floor((cfg.minPlumes or 2) + (((cfg.maxPlumes or 6) - (cfg.minPlumes or 2)) * density) + 0.5))
     local fireCount = 0
 
@@ -1206,7 +1935,8 @@ local function rebuildWildfireFx(zone, density)
     end
 
     local pedCoords = GetEntityCoords(PlayerPedId())
-    local positions = computeWildfirePositions(pedCoords, density, plumeCount, fireCount, cfg)
+    local zoneAnchor = zone.coords
+    local positions = computeWildfirePositions(zoneAnchor, density, plumeCount, fireCount, cfg)
 
     removeSmoke()
 
@@ -1259,11 +1989,20 @@ local function rebuildWildfireFx(zone, density)
         end
     end
 
-    wildfireAnchor = pedCoords
+    wildfireAnchor = {
+        x = zoneAnchor.x + 0.0,
+        y = zoneAnchor.y + 0.0,
+        z = zoneAnchor.z + 0.0
+    }
+    wildfireObserverAnchor = {
+        x = pedCoords.x + 0.0,
+        y = pedCoords.y + 0.0,
+        z = pedCoords.z + 0.0
+    }
     wildfireSignature = ('%d:%d'):format(plumeCount, fireCount)
 end
 
-local function updateSmokePlumes(zone)
+function updateSmokePlumes(zone)
     local density = getSmokeDensity(zone)
     local cfg = Config.ClientFx.wildfireSmoke or {}
     local minPlumes = cfg.minPlumes or 2
@@ -1284,14 +2023,16 @@ local function updateSmokePlumes(zone)
     end
 
     local signature = ('%d:%d'):format(targetCount, fireCount)
-    if wildfireSignature == signature and wildfireAnchor and distanceBetween(pedCoords, wildfireAnchor) < refreshDistance then
+    local anchorMatches = wildfireAnchor and distanceBetween(zone.coords, wildfireAnchor) < 3.0
+    local observerMatches = wildfireObserverAnchor and distanceBetween(pedCoords, wildfireObserverAnchor) < refreshDistance
+    if wildfireSignature == signature and anchorMatches and observerMatches then
         return
     end
 
     rebuildWildfireFx(zone, density)
 end
 
-local function drawWildfireOverlay(zone)
+function drawWildfireOverlay(zone)
     local density = getSmokeDensity(zone)
     if density <= 0.0 then
         return
@@ -1310,7 +2051,7 @@ local function drawWildfireOverlay(zone)
     DrawRect(0.5, 0.5, 1.0, 1.0, accentColor.r, accentColor.g, accentColor.b, accentAlpha)
 end
 
-local function drawBlizzardOverlay(zone)
+function drawBlizzardOverlay(zone)
     local intensity = getBlizzardVisualIntensity(zone)
     if intensity <= 0.0 then
         return
@@ -1350,7 +2091,7 @@ ensurePtfxAsset = function(asset)
     return HasNamedPtfxAssetLoaded(asset)
 end
 
-local function stopParticleFxHandles(handles)
+function stopParticleFxHandles(handles)
     for i = 1, #handles do
         local handle = handles[i]
         if handle then
@@ -1379,7 +2120,7 @@ stopTornadoFx = function()
     nextTornadoFunnelRefreshAt = 0
 end
 
-local function ensureModelLoaded(modelName)
+function ensureModelLoaded(modelName)
     if not modelName then
         return nil
     end
@@ -1406,7 +2147,7 @@ local function ensureModelLoaded(modelName)
     return model
 end
 
-local function clearTornadoFunnelFx()
+function clearTornadoFunnelFx()
     stopParticleFxHandles(tornadoFunnelFxHandles)
     for i = 1, #tornadoFunnelFxNodes do
         local node = tornadoFunnelFxNodes[i]
@@ -1423,7 +2164,7 @@ local function clearTornadoFunnelFx()
     nextTornadoFunnelRefreshAt = 0
 end
 
-local function buildTornadoFunnelFx(zone)
+function buildTornadoFunnelFx(zone)
     local cfg = Config.ClientFx.tornadoFunnel or {}
     if cfg.enabled == false then
         clearTornadoFunnelFx()
@@ -1645,7 +2386,7 @@ local function buildTornadoFunnelFx(zone)
     nextTornadoFunnelRefreshAt = GetGameTimer() + rebuildIntervalMs
 end
 
-local function updateTornadoFunnelFx(zone)
+function updateTornadoFunnelFx(zone)
     if #tornadoFunnelFxNodes == 0 then
         return
     end
@@ -1792,7 +2533,7 @@ local function updateTornadoFunnelFx(zone)
     end
 end
 
-local function startTornadoFx(zone)
+function startTornadoFx(zone)
     if not zone then return end
     local particleCfg = Config.ClientFx.tornadoParticle or {}
     local seq = currentState and currentState.seq or 0
@@ -1859,7 +2600,7 @@ local function startTornadoFx(zone)
     tornadoFxSignature = signature
 end
 
-local function burstTornadoDebris(zone)
+function burstTornadoDebris(zone)
     local cfg = Config.ClientFx.tornadoParticle or {}
     local effect = cfg.debrisEffect
     if not effect then return end
@@ -1917,7 +2658,7 @@ local function burstTornadoDebris(zone)
     end
 end
 
-local function drawTornadoFunnel(zone)
+function drawTornadoFunnel(zone)
     local cfg = Config.ClientFx.tornadoFunnel or {}
     local drawSolid = cfg.drawSolidFunnel == true
     local drawVolumetric = cfg.drawVolumetricCloud == true
@@ -2148,6 +2889,12 @@ local function drawTornadoFunnel(zone)
     end
 end
 
+clientEffectsReady = true
+
+
+
+clientHazardsReady = false
+
 RegisterNetEvent('cbk_disasters:client:setState', function(state)
     setState(state)
 end)
@@ -2188,11 +2935,11 @@ RegisterNetEvent('cbk_disasters:client:setTornadoVisual', function(zone)
     end
 end)
 
-local function isPlayerInVehicle()
+function isPlayerInVehicle()
     return IsPedInAnyVehicle(PlayerPedId(), false)
 end
 
-local function isPlayerInInterior()
+function isPlayerInInterior()
     local ped = PlayerPedId()
     if ped == 0 or not DoesEntityExist(ped) then
         return false
@@ -2202,7 +2949,7 @@ local function isPlayerInInterior()
     return interior ~= 0
 end
 
-local function isPlayerInShade()
+function isPlayerInShade()
     local ped = PlayerPedId()
     if ped == 0 or not DoesEntityExist(ped) then
         return false
@@ -2225,11 +2972,11 @@ local function isPlayerInShade()
     return hit == 1
 end
 
-local function isHeatwaveProtected()
+function isHeatwaveProtected()
     return isPlayerInVehicle() or isPlayerInInterior() or isPlayerInShade()
 end
 
-local function getHazardDamageMultiplier(hazard)
+function getHazardDamageMultiplier(hazard)
     if type(hazard) ~= 'string' or hazard == '' then
         return 1.0
     end
@@ -2253,7 +3000,7 @@ local function getHazardDamageMultiplier(hazard)
     return 1.0
 end
 
-local function requestTornadoEntityControl(entity)
+function requestTornadoEntityControl(entity)
     if entity == 0 or not DoesEntityExist(entity) then
         return false
     end
@@ -2280,7 +3027,7 @@ local function requestTornadoEntityControl(entity)
     return NetworkHasControlOfEntity(entity)
 end
 
-local function getTornadoForceData(entity, center, maxForceDistance, baseIntensity, interactionCfg)
+function getTornadoForceData(entity, center, maxForceDistance, baseIntensity, interactionCfg)
     if entity == 0 or not DoesEntityExist(entity) or not center then
         return nil
     end
@@ -2316,7 +3063,7 @@ local function getTornadoForceData(entity, center, maxForceDistance, baseIntensi
     }
 end
 
-local function clampTornadoEntityVelocity(entity, maxSpeed)
+function clampTornadoEntityVelocity(entity, maxSpeed)
     if entity == 0 or not DoesEntityExist(entity) or not maxSpeed or maxSpeed <= 0.0 then
         return
     end
@@ -2329,7 +3076,7 @@ local function clampTornadoEntityVelocity(entity, maxSpeed)
     end
 end
 
-local function getTornadoLiftEntityState(entity)
+function getTornadoLiftEntityState(entity)
     if entity == 0 or not DoesEntityExist(entity) then
         return nil
     end
@@ -2346,9 +3093,11 @@ end
 
 clearTornadoLiftEntityStates = function()
     tornadoLiftEntityStates = {}
+    tornadoNextPedSweepAt = 0
+    tornadoNextVehicleSweepAt = 0
 end
 
-local function applyTornadoVelocityInjection(entity, force, cfg)
+function applyTornadoVelocityInjection(entity, force, cfg)
     if entity == 0 or not DoesEntityExist(entity) or not force or not cfg then
         return
     end
@@ -2381,7 +3130,7 @@ local function applyTornadoVelocityInjection(entity, force, cfg)
     SetEntityVelocity(entity, vx, vy, vz)
 end
 
-local function maintainTornadoPedRagdoll(ped, force, pedCfg)
+function maintainTornadoPedRagdoll(ped, force, pedCfg)
     if ped == 0 or not DoesEntityExist(ped) or not force or not pedCfg then
         return
     end
@@ -2409,7 +3158,7 @@ local function maintainTornadoPedRagdoll(ped, force, pedCfg)
     end
 end
 
-local function tryReleaseTornadoPed(ped, force, pedCfg, interactionCfg)
+function tryReleaseTornadoPed(ped, force, pedCfg, interactionCfg)
     if ped == 0 or not DoesEntityExist(ped) or not force or not pedCfg then
         return false
     end
@@ -2468,7 +3217,7 @@ local function tryReleaseTornadoPed(ped, force, pedCfg, interactionCfg)
     return true
 end
 
-local function tryReleaseTornadoVehicle(entity, force, vehicleCfg, interactionCfg)
+function tryReleaseTornadoVehicle(entity, force, vehicleCfg, interactionCfg)
     if entity == 0 or not DoesEntityExist(entity) or not force or not vehicleCfg then
         return false
     end
@@ -2525,7 +3274,7 @@ local function tryReleaseTornadoVehicle(entity, force, vehicleCfg, interactionCf
     return true
 end
 
-local function applyConfiguredTornadoVehicleForce(entity, center, baseIntensity, vehicleCfg, maxForceDistance, liftScale, spinScale, stallChance, interactionCfg)
+function applyConfiguredTornadoVehicleForce(entity, center, baseIntensity, vehicleCfg, maxForceDistance, liftScale, spinScale, stallChance, interactionCfg)
     local force = getTornadoForceData(entity, center, maxForceDistance or vehicleCfg.maxDistance or 120.0, baseIntensity, interactionCfg)
     if not force or not requestTornadoEntityControl(entity) then
         return false, nil, nil
@@ -2572,7 +3321,7 @@ local function applyConfiguredTornadoVehicleForce(entity, center, baseIntensity,
     return true, force.dist, force.forceScale
 end
 
-local function applyConfiguredTornadoPedForce(ped, center, baseIntensity, pedCfg, maxForceDistance, interactionCfg)
+function applyConfiguredTornadoPedForce(ped, center, baseIntensity, pedCfg, maxForceDistance, interactionCfg)
     local force = getTornadoForceData(ped, center, maxForceDistance or pedCfg.maxDistance or 90.0, baseIntensity, interactionCfg)
     if not force or not requestTornadoEntityControl(ped) then
         return false, nil, nil
@@ -2609,7 +3358,7 @@ local function applyConfiguredTornadoPedForce(ped, center, baseIntensity, pedCfg
     return true, force.dist, force.forceScale
 end
 
-local function isTornadoDebrisEntity(entity)
+function isTornadoDebrisEntity(entity)
     for i = 1, #tornadoDebrisPool do
         local entry = tornadoDebrisPool[i]
         if entry and entry.entity == entity then
@@ -2620,7 +3369,7 @@ local function isTornadoDebrisEntity(entity)
     return false
 end
 
-local function applyTornadoForce(payload)
+function applyTornadoForce(payload)
     if not payload or not payload.center then
         return
     end
@@ -2659,7 +3408,7 @@ local function applyTornadoForce(payload)
     end
 end
 
-local function applyLocalTornadoLift(zone)
+function applyLocalTornadoLift(zone)
     local interactionCfg = Config.ClientFx.tornadoInteraction or {}
     if interactionCfg.enabled == false or not zone or not zone.coords then
         return
@@ -2680,6 +3429,8 @@ local function applyLocalTornadoLift(zone)
     local vehicleCfg = interactionCfg.vehicle or {}
     local playerVehicle = GetVehiclePedIsIn(playerPed, false)
     local center = zone.coords
+    local nowMs = GetGameTimer()
+    local forceIntervalMs = math.max(70, math.floor(interactionCfg.forceIntervalMs or 140))
 
     if playerVehicle ~= 0 and vehicleCfg.enabled ~= false then
         applyConfiguredTornadoVehicleForce(
@@ -2711,7 +3462,8 @@ local function applyLocalTornadoLift(zone)
         return
     end
 
-    if pedCfg.enabled ~= false then
+    if pedCfg.enabled ~= false and nowMs >= (tornadoNextPedSweepAt or 0) then
+        tornadoNextPedSweepAt = nowMs + math.max(forceIntervalMs, math.floor(pedCfg.sweepIntervalMs or 350))
         local pedAffected = 0
         local pedMaxCount = math.max(1, math.floor(pedCfg.maxSweepCount or 10))
         for _, nearbyPed in ipairs(GetGamePool('CPed')) do
@@ -2741,7 +3493,8 @@ local function applyLocalTornadoLift(zone)
         end
     end
 
-    if vehicleCfg.enabled ~= false then
+    if vehicleCfg.enabled ~= false and nowMs >= (tornadoNextVehicleSweepAt or 0) then
+        tornadoNextVehicleSweepAt = nowMs + math.max(forceIntervalMs, math.floor(vehicleCfg.sweepIntervalMs or 450))
         local vehicleAffected = 0
         local vehicleMaxCount = math.max(1, math.floor(vehicleCfg.maxSweepCount or 8))
         for _, vehicle in ipairs(GetGamePool('CVehicle')) do
@@ -2772,7 +3525,7 @@ local function applyLocalTornadoLift(zone)
     end
 end
 
-local function spawnLightningFx(coords)
+function spawnLightningFx(coords)
     ForceLightningFlash()
     local playerCoords = GetEntityCoords(PlayerPedId())
     local dx = playerCoords.x - coords.x
@@ -2837,12 +3590,22 @@ exports('GetActiveDisaster', function()
     return currentState
 end)
 
+clientHazardsReady = true
+
+
+
+function waitForClientModules()
+    return true
+end
+
 CreateThread(function()
+    waitForClientModules()
     Wait(2500)
     TriggerServerEvent('cbk_disasters:server:requestState')
 end)
 
 CreateThread(function()
+    waitForClientModules()
     while true do
         Wait(500)
 
@@ -2856,6 +3619,7 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    waitForClientModules()
     while true do
         Wait(1000)
 
@@ -2875,6 +3639,7 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    waitForClientModules()
     while true do
         local state = currentState
         if Config.Debug and Config.ClientFx.drawZoneMarkersWhenDebug and state and state.context and state.context.zone then
@@ -2888,6 +3653,7 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    waitForClientModules()
     while true do
         local state = currentState
         local cfg = Config.ClientFx.zoneBlip or {}
@@ -2914,6 +3680,7 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    waitForClientModules()
     while true do
         local tornadoZone = getActiveTornadoZone()
         if tornadoZone then
@@ -2930,6 +3697,7 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    waitForClientModules()
     while true do
         local state = currentState
         local hazard = getStateHazard(state)
@@ -2944,6 +3712,7 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    waitForClientModules()
     while true do
         local state = currentState
         local hazard = getStateHazard(state)
@@ -2958,6 +3727,7 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    waitForClientModules()
     while true do
         local state = currentState
         local hazard = getStateHazard(state)
@@ -2971,6 +3741,7 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    waitForClientModules()
     while true do
         local tornadoZone = getActiveTornadoZone()
         if tornadoZone then
@@ -2983,6 +3754,7 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    waitForClientModules()
     while true do
         local tornadoZone = getActiveTornadoZone()
         if tornadoZone then
@@ -2997,6 +3769,7 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    waitForClientModules()
     while true do
         local tornadoZone = getActiveTornadoZone()
         local interactionCfg = Config.ClientFx.tornadoInteraction or {}
@@ -3011,6 +3784,7 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    waitForClientModules()
     while true do
         local tornadoZone = getActiveTornadoZone()
         local debrisCfg = ((Config.ClientFx.tornadoInteraction or {}).debrisPool or {})
@@ -3025,6 +3799,7 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    waitForClientModules()
     while true do
         Wait(500)
         local state = currentState
@@ -3039,6 +3814,7 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    waitForClientModules()
     while true do
         local state = currentState
         local hazard = getStateHazard(state)
@@ -3052,6 +3828,7 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    waitForClientModules()
     while true do
         if panelOpen then
             Wait(0)
@@ -3065,6 +3842,7 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+    waitForClientModules()
     while true do
         if tornadoDebugEnabled then
             Wait(0)
@@ -3097,14 +3875,6 @@ if Config.Debug then
     end, false)
 end
 
-RegisterCommand('disasters', function()
-    if panelOpen then
-        closePanel()
-    else
-        TriggerServerEvent('cbk_disasters:server:requestOpenPanel')
-    end
-end, false)
-
 AddEventHandler('onClientResourceStop', function(resourceName)
     if resourceName ~= GetCurrentResourceName() then return end
     closePanel()
@@ -3119,3 +3889,6 @@ AddEventHandler('onClientResourceStop', function(resourceName)
     stopTornadoFx()
     StopGameplayCamShaking(true)
 end)
+
+
+
