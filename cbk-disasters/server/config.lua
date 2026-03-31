@@ -5,7 +5,9 @@ Config.Admin = {
     allowAcePermissions = true,            -- Set to false to disable ACE lookups and rely solely on identifiers.
     allowConsole = true,                   -- Allow the server console (source 0) to run admin commands.
     identifiers = {
-        'fivem:18296635',                     -- Authorized identifier example.
-        'discord:1043241558503337994',        -- Authorized identifier example.
+                'license:replace_with_admin_license',
+                'fivem:replace_with_admin_fivem_id',
+                'discord:replace_with_admin_discord_id',
+                'steam:replace_with_admin_steam_id'       -- Authorized identifier example.
     }
 }
